@@ -1,0 +1,29 @@
+# dependencies
+node_modules/
+
+# build outputs
+dist/
+build/
+coverage/
+
+# editor / os
+.DS_Store
+.vscode/
+.idea/
+*.log
+*.swp
+
+# env
+.env
+.env.*
+!.env.example
+
+# vercel
+.vercel/
+
+# claude local dev config (absolute paths, machine-specific)
+.claude/
+
+# misc
+*.tgz
+.cache/
