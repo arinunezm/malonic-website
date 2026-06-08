@@ -34,8 +34,46 @@ import { Services } from './sections/Services';
 import { Catalogue } from './sections/Catalogue';
 import { Booking } from './sections/Booking';
 import { Footer } from './sections/Footer';
+import { Admin } from './sections/Admin';
+
+// Tiny pathname-based route guard. Avoids pulling in react-router for one shell.
+function useIsAdminRoute() {
+  const [isAdmin, setIsAdmin] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    const p = window.location.pathname.replace(/\/+$/, '');
+    return p === '/admin';
+  });
+  useEffect(() => {
+    const onChange = () => {
+      const p = window.location.pathname.replace(/\/+$/, '');
+      setIsAdmin(p === '/admin');
+    };
+    window.addEventListener('popstate', onChange);
+    return () => window.removeEventListener('popstate', onChange);
+  }, []);
+  return isAdmin;
+}
 
 export default function App() {
+  const isAdmin = useIsAdminRoute();
+
+  // /admin → snappy CRM shell. We deliberately drop the marketing loader,
+  // nav, scroll-progress and main marketing scroll experience here — it's an
+  // internal tool, not a hero page.
+  if (isAdmin) {
+    return (
+      <LangProvider>
+        <Cursor />
+        <Grain />
+        <Admin />
+      </LangProvider>
+    );
+  }
+
+  return <MarketingSite />;
+}
+
+function MarketingSite() {
   const [loading, setLoading] = useState(true);
 
   // Lock scroll while the loader is up so the hero reveals from a clean state.
