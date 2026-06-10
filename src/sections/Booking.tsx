@@ -3,6 +3,7 @@ import { motion } from 'motion/react';
 import { useLang, content } from '../lib/i18n';
 import { ease, dur } from '../lib/motion';
 import { useSectionTheme, Label, MagneticButton } from '../components/primitives';
+import { submitWebRequest } from '../lib/admin-store';
 
 export function Booking() {
   const ref = useSectionTheme<HTMLElement>('paper');
@@ -24,6 +25,15 @@ export function Booking() {
 
   const onSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    // Feed the CRM inbox (/admin → Solicitudes). Local-first for now: the
+    // request is visible in this browser; the backend phase will sync it.
+    submitWebRequest({
+      name: form.name,
+      email: form.email,
+      project: form.project,
+      service: form.service,
+      message: form.message,
+    });
     setSubmitted(true);
   };
 

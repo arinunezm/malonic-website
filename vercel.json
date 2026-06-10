@@ -7,7 +7,9 @@
   "trailingSlash": false,
   "rewrites": [
     { "source": "/admin", "destination": "/" },
-    { "source": "/admin/:path*", "destination": "/" }
+    { "source": "/admin/:path*", "destination": "/" },
+    { "source": "/blog", "destination": "/" },
+    { "source": "/blog/:path*", "destination": "/" }
   ],
   "headers": [
     {

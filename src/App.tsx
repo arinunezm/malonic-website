@@ -35,37 +35,52 @@ import { Catalogue } from './sections/Catalogue';
 import { Booking } from './sections/Booking';
 import { Footer } from './sections/Footer';
 import { Admin } from './sections/Admin';
+import { BlogIndex, BlogPost } from './sections/Blog';
 
-// Tiny pathname-based route guard. Avoids pulling in react-router for one shell.
-function useIsAdminRoute() {
-  const [isAdmin, setIsAdmin] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return false;
-    const p = window.location.pathname.replace(/\/+$/, '');
-    return p === '/admin';
-  });
+// Tiny pathname-based router. Avoids pulling in react-router for two shells.
+type Route = { kind: 'site' } | { kind: 'admin' } | { kind: 'blog' } | { kind: 'post'; slug: string };
+
+function parseRoute(pathname: string): Route {
+  const p = pathname.replace(/\/+$/, '');
+  if (p === '/admin') return { kind: 'admin' };
+  if (p === '/blog') return { kind: 'blog' };
+  const post = p.match(/^\/blog\/([^/]+)$/);
+  if (post) return { kind: 'post', slug: decodeURIComponent(post[1]) };
+  return { kind: 'site' };
+}
+
+function useRoute(): Route {
+  const [route, setRoute] = useState<Route>(() =>
+    typeof window === 'undefined' ? { kind: 'site' } : parseRoute(window.location.pathname),
+  );
   useEffect(() => {
-    const onChange = () => {
-      const p = window.location.pathname.replace(/\/+$/, '');
-      setIsAdmin(p === '/admin');
-    };
+    const onChange = () => setRoute(parseRoute(window.location.pathname));
     window.addEventListener('popstate', onChange);
     return () => window.removeEventListener('popstate', onChange);
   }, []);
-  return isAdmin;
+  return route;
 }
 
 export default function App() {
-  const isAdmin = useIsAdminRoute();
+  const route = useRoute();
 
-  // /admin → snappy CRM shell. We deliberately drop the marketing loader,
-  // nav, scroll-progress and main marketing scroll experience here — it's an
-  // internal tool, not a hero page.
-  if (isAdmin) {
+  // /admin → CRM shell · /blog → journal. Both deliberately drop the
+  // marketing loader, nav and scroll experience — they're inner pages.
+  if (route.kind === 'admin') {
     return (
       <LangProvider>
         <Cursor />
         <Grain />
         <Admin />
+      </LangProvider>
+    );
+  }
+  if (route.kind === 'blog' || route.kind === 'post') {
+    return (
+      <LangProvider>
+        <Cursor />
+        <Grain />
+        {route.kind === 'blog' ? <BlogIndex /> : <BlogPost slug={route.slug} />}
       </LangProvider>
     );
   }
