@@ -183,18 +183,20 @@ export const CLIENTS: Client[] = [
  * ───────────────────────────────────────────────────────────────────────── */
 
 export type Activity = {
+  /** Bolded subject at the start of the entry (client / system actor). */
+  actor?: string;
   text: string;
   time: string;
   tone: AvatarAccent;
 };
 
 export const ACTIVITIES: Activity[] = [
-  { text: '<strong>Carlos Mendoza</strong> confirmó sesión Atmos para el 22 de mayo.',           time: 'Hace 15 min', tone: 'signal' },
-  { text: '<strong>Laura Vega</strong> solicitó reservación de Mezcla Estéreo.',                  time: 'Hace 1 hora', tone: 'brass'  },
-  { text: '<strong>Fernanda Díaz</strong> completó sesión de Grabación Atmos.',                   time: 'Hace 3 horas',tone: 'pearl'  },
-  { text: '<strong>Diego Torres</strong> envió solicitud para Mezcla Atmos documental.',          time: 'Hace 5 horas',tone: 'brass'  },
-  { text: '<strong>Emilio Garza</strong> tiene balance vencido de <strong>$12,500 MXN</strong>.', time: 'Ayer',        tone: 'signal' },
-  { text: 'Se actualizó tarifa de Mastering a <strong>$3,000 MXN/track</strong>.',                time: 'Ayer',        tone: 'paper'  },
+  { actor: 'Carlos Mendoza',  text: 'confirmó sesión Atmos para el 22 de mayo.',          time: 'Hace 15 min', tone: 'signal' },
+  { actor: 'Laura Vega',      text: 'solicitó reservación de Mezcla Estéreo.',            time: 'Hace 1 hora', tone: 'brass'  },
+  { actor: 'Fernanda Díaz',   text: 'completó sesión de Grabación Atmos.',                time: 'Hace 3 horas',tone: 'pearl'  },
+  { actor: 'Diego Torres',    text: 'envió solicitud para Mezcla Atmos documental.',      time: 'Hace 5 horas',tone: 'brass'  },
+  { actor: 'Emilio Garza',    text: 'tiene balance vencido de $12,500 MXN.',              time: 'Ayer',        tone: 'signal' },
+  { text: 'Se actualizó tarifa de Mastering a $3,000 MXN/track.',                         time: 'Ayer',        tone: 'paper'  },
 ];
 
 /* ─────────────────────────────────────────────────────────────────────────
@@ -276,25 +278,35 @@ export const parseHour = (time: string): number => {
 export const balanceOf = (b: Booking): number =>
   b.status === 'cancelled' || b.paymentStatus === 'paid' ? 0 : b.amount - b.deposit;
 
-/** Receivables = confirmed/completed bookings with an outstanding balance. */
-export const RECEIVABLES: Booking[] = BOOKINGS
-  .filter((b) => (b.status === 'confirmed' || b.status === 'completed') && balanceOf(b) > 0)
-  .sort((a, b) => Number(b.paymentStatus === 'overdue') - Number(a.paymentStatus === 'overdue'));
+/* Derived metrics take the live bookings array (admin state) so the
+ * dashboard reacts when new reservations are created in-session. */
 
-export const TOTAL_RECEIVABLE = RECEIVABLES.reduce((acc, b) => acc + balanceOf(b), 0);
+/** Receivables = confirmed/completed bookings with an outstanding balance, overdue first. */
+export const receivablesOf = (list: Booking[]): Booking[] =>
+  list
+    .filter((b) => (b.status === 'confirmed' || b.status === 'completed') && balanceOf(b) > 0)
+    .sort((a, b) => Number(b.paymentStatus === 'overdue') - Number(a.paymentStatus === 'overdue'));
 
-export const TOTAL_OVERDUE = RECEIVABLES
-  .filter((b) => b.paymentStatus === 'overdue')
-  .reduce((acc, b) => acc + balanceOf(b), 0);
+export const totalReceivableOf = (list: Booking[]): number =>
+  receivablesOf(list).reduce((acc, b) => acc + balanceOf(b), 0);
+
+export const totalOverdueOf = (list: Booking[]): number =>
+  receivablesOf(list)
+    .filter((b) => b.paymentStatus === 'overdue')
+    .reduce((acc, b) => acc + balanceOf(b), 0);
 
 /** Deposits held = money received on confirmed (not-yet-completed) sessions. */
-export const TOTAL_DEPOSITS_HELD = BOOKINGS
-  .filter((b) => b.status === 'confirmed')
-  .reduce((acc, b) => acc + b.deposit, 0);
+export const depositsHeldOf = (list: Booking[]): number =>
+  list.filter((b) => b.status === 'confirmed').reduce((acc, b) => acc + b.deposit, 0);
+
+export const avgTicketOf = (list: Booking[]): number => {
+  const active = list.filter((b) => b.status !== 'cancelled');
+  if (active.length === 0) return 0;
+  return Math.round(active.reduce((acc, b) => acc + b.amount, 0) / active.length);
+};
+
+/** Sessions falling inside the calendar demo week (non-cancelled). */
+export const weekSessionsOf = (list: Booking[]): number =>
+  list.filter((b) => b.status !== 'cancelled' && CAL_DAYS.some((d) => d.key === b.date)).length;
 
 export const CURRENT_MONTH_REVENUE = MONTHLY_REVENUE[MONTHLY_REVENUE.length - 1].revenue;
-
-export const AVG_TICKET = Math.round(
-  BOOKINGS.filter((b) => b.status !== 'cancelled').reduce((acc, b) => acc + b.amount, 0) /
-    BOOKINGS.filter((b) => b.status !== 'cancelled').length,
-);

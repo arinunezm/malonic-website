@@ -12,7 +12,7 @@
  *   - 3D primitives (.perspective-1200 / .preserve-3d / .backface-hidden) live in index.css.
  */
 
-import React, { useEffect, useMemo, useState, type FormEvent, type SVGProps } from 'react';
+import React, { useCallback, useContext, useEffect, useMemo, useState, type FormEvent, type SVGProps } from 'react';
 import { animate, motion, useMotionValue, useSpring, useTransform, AnimatePresence } from 'motion/react';
 import { ease, dur } from '../lib/motion';
 import { Wordmark } from '../components/Nav';
@@ -21,7 +21,6 @@ import {
   ACCENT_FG,
   ACCENT_SOFT,
   ACTIVITIES,
-  AVG_TICKET,
   BOOKINGS,
   CAL_DAYS,
   CAL_END_HOUR,
@@ -31,21 +30,25 @@ import {
   CURRENT_MONTH_REVENUE,
   ENGINEERS,
   MONTHLY_REVENUE,
-  RECEIVABLES,
   ROOMS,
   ROOM_BY_ID,
   SERVICES,
-  TOTAL_DEPOSITS_HELD,
-  TOTAL_OVERDUE,
-  TOTAL_RECEIVABLE,
   WEEKLY_HOURS,
+  avgTicketOf,
   balanceOf,
+  depositsHeldOf,
   formatDateMX,
   formatMXN,
   initialsOf,
   parseHour,
+  receivablesOf,
+  totalOverdueOf,
+  totalReceivableOf,
+  weekSessionsOf,
+  type Activity,
   type AvatarAccent,
   type Availability,
+  type Booking,
   type BookingStatus,
   type PaymentStatus,
   type Service,
@@ -136,10 +139,7 @@ function AccessCard3D({ onUnlock }: { onUnlock: () => void }) {
   const tiltYSpring = useSpring(tiltY, { stiffness: 160, damping: 22, mass: 0.5 });
 
   // Sum flip + tilt into one rotateY motion value.
-  const rotateY = useTransform([flipY, tiltYSpring] as ReadonlyArray<ReturnType<typeof useMotionValue>>, (vals) => {
-    const [f, t] = vals as [number, number];
-    return f + t;
-  });
+  const rotateY = useTransform([flipY, tiltYSpring], ([f, t]: number[]) => f + t);
 
   // Light source — a soft sheen that follows the pointer.
   const sheenX = useMotionValue(50);
@@ -175,10 +175,11 @@ function AccessCard3D({ onUnlock }: { onUnlock: () => void }) {
     window.setTimeout(onUnlock, 1500);
   };
 
-  const sheen = useTransform([sheenX, sheenY] as ReadonlyArray<ReturnType<typeof useMotionValue>>, (vals) => {
-    const [x, y] = vals as [number, number];
-    return `radial-gradient(circle 60% at ${x}% ${y}%, rgba(245,243,238,0.10) 0%, rgba(245,243,238,0.02) 35%, rgba(10,10,10,0) 75%)`;
-  });
+  const sheen = useTransform(
+    [sheenX, sheenY],
+    ([x, y]: number[]) =>
+      `radial-gradient(circle 60% at ${x}% ${y}%, rgba(245,243,238,0.10) 0%, rgba(245,243,238,0.02) 35%, rgba(10,10,10,0) 75%)`,
+  );
 
   return (
     <div className="relative w-full max-w-[540px] mx-auto perspective-1200">
@@ -411,10 +412,56 @@ const PAGE_TITLES: Record<PageId, string> = {
   team: 'Equipo',
 };
 
-function AdminSidebar({ page, setPage, onLock }: { page: PageId; setPage: (p: PageId) => void; onLock: () => void }) {
+/* ─────────────────────────────────────────────────────────────────────────
+ * Admin context — bookings live as React state so creating a reservation
+ * updates KPIs, tables, calendar and receivables without a backend.
+ * ───────────────────────────────────────────────────────────────────────── */
+
+type NewBookingDraft = {
+  client: string;
+  project: string;
+  serviceId: string;
+  date: string;
+  time: string;
+  duration: number;
+  engineerId: string;
+  deposit: number;
+};
+
+type AdminState = {
+  bookings: Booking[];
+  activities: Activity[];
+  query: string;
+  setQuery: (q: string) => void;
+  loading: boolean;
+  page: PageId;
+  setPage: (p: PageId) => void;
+  openNewBooking: () => void;
+  addBooking: (draft: NewBookingDraft) => void;
+  notify: (message: string) => void;
+  lock: () => void;
+};
+
+const AdminContext = React.createContext<AdminState | null>(null);
+
+function useAdmin(): AdminState {
+  const ctx = useContext(AdminContext);
+  if (!ctx) throw new Error('useAdmin must be used inside <AdminDashboard>');
+  return ctx;
+}
+
+const ACCENT_CYCLE: AvatarAccent[] = ['signal', 'brass', 'pearl', 'paper'];
+
+/** Case/trim-insensitive match across a set of searchable strings. */
+const matchesQuery = (q: string, ...fields: string[]): boolean =>
+  fields.some((f) => f.toLowerCase().includes(q));
+
+function AdminSidebar() {
+  const { page, setPage, lock, bookings } = useAdmin();
+  const pendingCount = bookings.filter((b) => b.status === 'pending').length;
   const items: { id: PageId; label: string; Icon: (p: IconProps) => React.JSX.Element; badge?: number }[] = [
     { id: 'dashboard', label: 'Dashboard',     Icon: IconDashboard },
-    { id: 'bookings',  label: 'Reservaciones', Icon: IconBookings, badge: 2 },
+    { id: 'bookings',  label: 'Reservaciones', Icon: IconBookings, badge: pendingCount > 0 ? pendingCount : undefined },
     { id: 'clients',   label: 'Clientes',      Icon: IconUsers },
     { id: 'calendar',  label: 'Calendario',    Icon: IconCalendar },
     { id: 'revenue',   label: 'Ingresos',      Icon: IconRevenue },
@@ -520,7 +567,7 @@ function AdminSidebar({ page, setPage, onLock }: { page: PageId; setPage: (p: Pa
         </div>
         <button
           type="button"
-          onClick={onLock}
+          onClick={lock}
           className="font-mono text-[10px] uppercase tracking-[0.18em] opacity-60 hover:opacity-100 transition-opacity"
           data-cursor="hover"
           aria-label="Cerrar sesión"
@@ -533,48 +580,66 @@ function AdminSidebar({ page, setPage, onLock }: { page: PageId; setPage: (p: Pa
   );
 }
 
-function Topbar({ page }: { page: PageId }) {
+function Topbar() {
+  const { page, query, setQuery, openNewBooking } = useAdmin();
   return (
     <header
-      className="sticky top-0 z-30 flex items-center justify-between gap-6 px-6 md:px-10 h-[72px]"
+      className="sticky top-0 z-30 flex items-center justify-between gap-4 px-5 md:px-10 h-[72px]"
       style={{
         background: 'color-mix(in srgb, var(--color-ink) 78%, transparent)',
         backdropFilter: 'blur(18px)',
         borderBottom: '1px solid color-mix(in srgb, var(--color-paper) 5%, transparent)',
       }}
     >
-      <div className="flex items-baseline gap-4">
-        <h1 className="font-display text-[1.4rem]" style={{ color: 'var(--color-paper)', letterSpacing: '-0.018em' }}>
+      <div className="flex items-baseline gap-4 min-w-0">
+        <h1 className="font-display text-[1.25rem] md:text-[1.4rem] truncate" style={{ color: 'var(--color-paper)', letterSpacing: '-0.018em' }}>
           {PAGE_TITLES[page]}
         </h1>
-        <span className="hidden sm:inline-flex font-mono text-[10px] uppercase tracking-[0.22em]" style={{ color: 'var(--color-mist)' }}>
-          21 may · semana 21
+        <span className="hidden lg:inline-flex font-mono text-[10px] uppercase tracking-[0.22em] whitespace-nowrap" style={{ color: 'var(--color-mist)' }}>
+          {CALENDAR_WEEK_LABEL}
         </span>
       </div>
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 shrink-0">
         <div
-          className="hidden sm:flex items-center gap-2 px-3 py-2 rounded-full w-[260px]"
+          className="hidden sm:flex items-center gap-2 px-3 py-2 rounded-full w-[220px] md:w-[260px]"
           style={{
             background: 'color-mix(in srgb, var(--color-paper) 4%, transparent)',
             border: '1px solid color-mix(in srgb, var(--color-paper) 8%, transparent)',
           }}
         >
-          <IconSearch width={14} height={14} />
+          <IconSearch width={14} height={14} style={{ color: 'var(--color-cloud)', flexShrink: 0 }} />
           <input
             type="search"
-            placeholder="Buscar cliente, reservación…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Buscar cliente, proyecto…"
+            aria-label="Buscar en el CRM"
             className="bg-transparent outline-none border-0 text-[0.85rem] w-full"
             style={{ color: 'var(--color-paper)' }}
           />
+          {query ? (
+            <button
+              type="button"
+              onClick={() => setQuery('')}
+              aria-label="Limpiar búsqueda"
+              data-cursor="hover"
+              className="font-mono text-[11px] leading-none px-1 opacity-60 hover:opacity-100 transition-opacity"
+              style={{ color: 'var(--color-paper)' }}
+            >
+              ✕
+            </button>
+          ) : null}
         </div>
         <button
           type="button"
+          onClick={openNewBooking}
+          aria-label="Nueva reserva"
           className="inline-flex items-center gap-2 px-3 py-2 rounded-full font-mono text-[10px] uppercase tracking-[0.2em]"
           style={{ background: 'var(--color-signal)', color: 'var(--color-ink)' }}
           data-cursor="signal"
         >
           <IconPlus width={14} height={14} />
-          Nueva reserva
+          <span className="hidden sm:inline">Nueva reserva</span>
         </button>
       </div>
     </header>
@@ -590,10 +655,14 @@ type Kpi = {
 };
 
 function KPIGrid() {
+  const { bookings } = useAdmin();
+  const weekSessions = weekSessionsOf(bookings);
+  const receivable = totalReceivableOf(bookings);
+  const overdue = totalOverdueOf(bookings);
   const kpis: Kpi[] = [
-    { Icon: IconCalendar,   value: '6',                                 label: 'Sesiones esta semana', delta: '+20%' },
+    { Icon: IconCalendar,   value: String(weekSessions),                label: 'Sesiones esta semana', delta: '+20%' },
     { Icon: IconRevenue,    value: `$${Math.round(CURRENT_MONTH_REVENUE / 1000)}K`, label: 'Revenue mensual', delta: '+15%' },
-    { Icon: IconAlert,      value: `$${(TOTAL_RECEIVABLE / 1000).toFixed(1)}K`,     label: 'Por cobrar', delta: `${formatMXN(TOTAL_OVERDUE)} vencido`, alert: true },
+    { Icon: IconAlert,      value: `$${(receivable / 1000).toFixed(1)}K`,           label: 'Por cobrar', delta: `${formatMXN(overdue)} vencido`, alert: true },
     { Icon: IconHeadphones, value: '72%',                               label: 'Ocupación estudio',    delta: '+8%' },
   ];
   return (
@@ -741,8 +810,13 @@ function StatusPill({ status }: { status: BookingStatus }) {
 }
 
 function BookingsTable() {
+  const { bookings, query, setQuery } = useAdmin();
   const [tab, setTab] = useState<'all' | BookingStatus>('all');
-  const filtered = useMemo(() => (tab === 'all' ? BOOKINGS : BOOKINGS.filter((b) => b.status === tab)), [tab]);
+  const q = query.trim().toLowerCase();
+  const filtered = useMemo(() => {
+    const searched = q ? bookings.filter((b) => matchesQuery(q, b.client, b.project, b.service)) : bookings;
+    return tab === 'all' ? searched : searched.filter((b) => b.status === tab);
+  }, [bookings, q, tab]);
 
   const tabs: { id: 'all' | BookingStatus; label: string }[] = [
     { id: 'all',       label: 'Todas' },
@@ -762,11 +836,18 @@ function BookingsTable() {
         border: '1px solid color-mix(in srgb, var(--color-paper) 5%, transparent)',
       }}
     >
-      <div className="flex items-center justify-between gap-3 px-5 py-4" style={{ borderBottom: '1px solid color-mix(in srgb, var(--color-paper) 5%, transparent)' }}>
-        <h3 className="font-display text-[1.05rem]" style={{ color: 'var(--color-paper)', letterSpacing: '-0.012em' }}>
-          Reservaciones
-        </h3>
-        <div className="inline-flex p-[3px] rounded-full" style={{ background: 'color-mix(in srgb, var(--color-paper) 5%, transparent)' }}>
+      <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4" style={{ borderBottom: '1px solid color-mix(in srgb, var(--color-paper) 5%, transparent)' }}>
+        <div className="flex items-baseline gap-3">
+          <h3 className="font-display text-[1.05rem]" style={{ color: 'var(--color-paper)', letterSpacing: '-0.012em' }}>
+            Reservaciones
+          </h3>
+          {q ? (
+            <span className="font-mono text-[10px] uppercase tracking-[0.16em]" style={{ color: 'var(--color-mist)' }}>
+              {filtered.length} de {bookings.length}
+            </span>
+          ) : null}
+        </div>
+        <div className="inline-flex p-[3px] rounded-full overflow-x-auto max-w-full" style={{ background: 'color-mix(in srgb, var(--color-paper) 5%, transparent)' }}>
           {tabs.map((t) => (
             <button
               key={t.id}
@@ -801,6 +882,41 @@ function BookingsTable() {
             </tr>
           </thead>
           <tbody>
+            {filtered.length === 0 ? (
+              <tr>
+                <td colSpan={6} className="px-5 py-16">
+                  <div className="flex flex-col items-center gap-3 text-center">
+                    <span
+                      className="w-10 h-10 rounded-full flex items-center justify-center"
+                      style={{ background: 'color-mix(in srgb, var(--color-paper) 5%, transparent)', color: 'var(--color-mist)' }}
+                    >
+                      <IconSearch width={16} height={16} />
+                    </span>
+                    <p className="text-[0.88rem]" style={{ color: 'var(--color-cloud)' }}>
+                      {q ? (
+                        <>Sin resultados para <strong style={{ color: 'var(--color-paper)', fontWeight: 600 }}>«{query.trim()}»</strong></>
+                      ) : (
+                        'No hay reservaciones en este estado.'
+                      )}
+                    </p>
+                    {q ? (
+                      <button
+                        type="button"
+                        onClick={() => setQuery('')}
+                        data-cursor="hover"
+                        className="px-4 py-2 rounded-full font-mono text-[10px] uppercase tracking-[0.18em] transition-opacity hover:opacity-80"
+                        style={{
+                          border: '1px solid color-mix(in srgb, var(--color-paper) 14%, transparent)',
+                          color: 'var(--color-paper)',
+                        }}
+                      >
+                        Limpiar búsqueda
+                      </button>
+                    ) : null}
+                  </div>
+                </td>
+              </tr>
+            ) : null}
             {filtered.map((b) => (
               <tr key={b.id} className="transition-colors hover:bg-white/[0.02]" data-cursor="hover">
                 <td className="px-5 py-3.5" style={{ borderBottom: '1px solid color-mix(in srgb, var(--color-paper) 3%, transparent)' }}>
@@ -842,12 +958,19 @@ function BookingsTable() {
 }
 
 function ActivityFeed() {
-  const toneColor: Record<NonNullable<typeof ACTIVITIES[number]['tone']>, string> = {
+  const { activities, openNewBooking, setPage, notify } = useAdmin();
+  const toneColor: Record<AvatarAccent, string> = {
     signal: 'var(--color-signal)',
     brass: 'color-mix(in srgb, var(--color-brass) 85%, var(--color-paper))',
     pearl: 'var(--color-pearl)',
     paper: 'var(--color-paper)',
   };
+  const quickActions: { label: string; run: () => void }[] = [
+    { label: 'Nueva reserva',   run: openNewBooking },
+    { label: 'Ver clientes',    run: () => setPage('clients') },
+    { label: 'Ver ingresos',    run: () => setPage('revenue') },
+    { label: 'Abrir calendario', run: () => { setPage('calendar'); notify('Calendario de la semana en curso'); } },
+  ];
   return (
     <motion.section
       initial={{ opacity: 0, y: 14 }}
@@ -865,16 +988,23 @@ function ActivityFeed() {
         </h3>
       </div>
       <ul className="px-5 py-3">
-        {ACTIVITIES.map((a, i) => (
-          <li key={i} className="flex gap-3 py-3">
+        {activities.slice(0, 7).map((a, i, shown) => (
+          <li key={`${a.time}-${a.actor ?? 'sys'}-${i}`} className="flex gap-3 py-3">
             <div className="flex flex-col items-center pt-[6px]">
               <span className="w-2 h-2 rounded-full" style={{ background: toneColor[a.tone] }} />
-              {i < ACTIVITIES.length - 1 ? (
+              {i < shown.length - 1 ? (
                 <span className="flex-1 w-px mt-1" style={{ background: 'color-mix(in srgb, var(--color-paper) 5%, transparent)' }} />
               ) : null}
             </div>
             <div className="min-w-0 pb-1">
-              <div className="text-[0.85rem]" style={{ color: 'var(--color-cloud)' }} dangerouslySetInnerHTML={{ __html: a.text }} />
+              <div className="text-[0.85rem]" style={{ color: 'var(--color-cloud)' }}>
+                {a.actor ? (
+                  <>
+                    <strong style={{ color: 'var(--color-paper)', fontWeight: 600 }}>{a.actor}</strong>{' '}
+                  </>
+                ) : null}
+                {a.text}
+              </div>
               <div className="font-mono text-[10px] uppercase tracking-[0.18em] mt-0.5" style={{ color: 'var(--color-mist)' }}>
                 {a.time}
               </div>
@@ -883,12 +1013,13 @@ function ActivityFeed() {
         ))}
       </ul>
       <div className="grid grid-cols-2 gap-2 px-5 py-4" style={{ borderTop: '1px solid color-mix(in srgb, var(--color-paper) 5%, transparent)' }}>
-        {['Nueva reserva', 'Agregar cliente', 'Ver reportes', 'Enviar mensaje'].map((label) => (
+        {quickActions.map(({ label, run }) => (
           <button
             key={label}
             type="button"
+            onClick={run}
             data-cursor="hover"
-            className="px-3 py-2 rounded-full font-mono text-[10px] uppercase tracking-[0.18em] transition-all"
+            className="px-3 py-2 rounded-full font-mono text-[10px] uppercase tracking-[0.18em] transition-all hover:opacity-80"
             style={{
               background: 'color-mix(in srgb, var(--color-paper) 4%, transparent)',
               border: '1px solid color-mix(in srgb, var(--color-paper) 8%, transparent)',
@@ -917,6 +1048,12 @@ function DashboardPage() {
 }
 
 function ClientsPage() {
+  const { query, setQuery } = useAdmin();
+  const q = query.trim().toLowerCase();
+  const filtered = useMemo(
+    () => (q ? CLIENTS.filter((c) => matchesQuery(q, c.name, c.artist, c.genre, c.label)) : CLIENTS),
+    [q],
+  );
   return (
     <motion.section initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: dur.md, ease: ease.outExpo }}>
       <div className="flex items-baseline justify-between mb-6">
@@ -927,11 +1064,33 @@ function ClientsPage() {
           </h2>
         </div>
         <span className="font-mono text-[11px] uppercase tracking-[0.2em]" style={{ color: 'var(--color-mist)' }}>
-          {CLIENTS.length} registrados
+          {q ? `${filtered.length} de ${CLIENTS.length}` : `${CLIENTS.length} registrados`}
         </span>
       </div>
+      {filtered.length === 0 ? (
+        <div className="rounded-[14px] px-6 py-16 flex flex-col items-center gap-3 text-center" style={CARD_STYLE}>
+          <span
+            className="w-10 h-10 rounded-full flex items-center justify-center"
+            style={{ background: 'color-mix(in srgb, var(--color-paper) 5%, transparent)', color: 'var(--color-mist)' }}
+          >
+            <IconUsers width={16} height={16} />
+          </span>
+          <p className="text-[0.88rem]" style={{ color: 'var(--color-cloud)' }}>
+            Ningún cliente coincide con <strong style={{ color: 'var(--color-paper)', fontWeight: 600 }}>«{query.trim()}»</strong>
+          </p>
+          <button
+            type="button"
+            onClick={() => setQuery('')}
+            data-cursor="hover"
+            className="px-4 py-2 rounded-full font-mono text-[10px] uppercase tracking-[0.18em] transition-opacity hover:opacity-80"
+            style={{ border: '1px solid color-mix(in srgb, var(--color-paper) 14%, transparent)', color: 'var(--color-paper)' }}
+          >
+            Limpiar búsqueda
+          </button>
+        </div>
+      ) : null}
       <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))' }}>
-        {CLIENTS.map((c) => (
+        {filtered.map((c) => (
           <motion.article
             key={c.name}
             whileHover={{ y: -2 }}
@@ -1044,6 +1203,7 @@ const ROW_H = 46;
 const CAL_HOURS = Array.from({ length: CAL_END_HOUR - CAL_START_HOUR }, (_, i) => CAL_START_HOUR + i);
 
 function CalendarPage() {
+  const { bookings } = useAdmin();
   return (
     <motion.section initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: dur.md, ease: ease.outExpo }}>
       <SectionHead
@@ -1070,7 +1230,7 @@ function CalendarPage() {
             <div className="grid" style={{ gridTemplateColumns: '56px repeat(7, 1fr)', borderBottom: '1px solid color-mix(in srgb, var(--color-paper) 6%, transparent)' }}>
               <div />
               {CAL_DAYS.map((d) => {
-                const count = BOOKINGS.filter((b) => b.date === d.key && b.status !== 'cancelled').length;
+                const count = bookings.filter((b) => b.date === d.key && b.status !== 'cancelled').length;
                 return (
                   <div key={d.key} className="px-2 py-3 text-center" style={{ borderLeft: '1px solid color-mix(in srgb, var(--color-paper) 5%, transparent)' }}>
                     <div className="font-mono text-[10px] uppercase tracking-[0.16em]" style={{ color: 'var(--color-mist)' }}>{d.label}</div>
@@ -1093,7 +1253,7 @@ function CalendarPage() {
 
               {/* Day columns */}
               {CAL_DAYS.map((d) => {
-                const dayBookings = BOOKINGS.filter((b) => b.date === d.key && b.status !== 'cancelled');
+                const dayBookings = bookings.filter((b) => b.date === d.key && b.status !== 'cancelled');
                 return (
                   <div key={d.key} className="relative" style={{ borderLeft: '1px solid color-mix(in srgb, var(--color-paper) 5%, transparent)', height: ROW_H * CAL_HOURS.length }}>
                     {/* Hour lines */}
@@ -1175,11 +1335,17 @@ function MiniBarChart({ data, accentFn }: { data: { label: string; value: number
 }
 
 function RevenuePage() {
+  const { bookings } = useAdmin();
+  const receivables = useMemo(() => receivablesOf(bookings), [bookings]);
+  const totalReceivable = useMemo(() => totalReceivableOf(bookings), [bookings]);
+  const totalOverdue = useMemo(() => totalOverdueOf(bookings), [bookings]);
+  const depositsHeld = useMemo(() => depositsHeldOf(bookings), [bookings]);
+  const avgTicket = useMemo(() => avgTicketOf(bookings), [bookings]);
   const cards = [
     { Icon: IconRevenue, value: `$${formatMXN(CURRENT_MONTH_REVENUE)}`, label: 'Revenue del mes (MXN)', accent: 'var(--color-signal)' },
-    { Icon: IconAlert,   value: `$${formatMXN(TOTAL_RECEIVABLE)}`,      label: `Por cobrar · $${formatMXN(TOTAL_OVERDUE)} vencido`, accent: 'var(--color-brass)' },
-    { Icon: IconClock,   value: `$${formatMXN(TOTAL_DEPOSITS_HELD)}`,   label: 'Depósitos retenidos', accent: 'var(--color-pearl)' },
-    { Icon: IconRevenue, value: `$${formatMXN(AVG_TICKET)}`,            label: 'Ticket promedio', accent: 'var(--color-cloud)' },
+    { Icon: IconAlert,   value: `$${formatMXN(totalReceivable)}`,       label: `Por cobrar · $${formatMXN(totalOverdue)} vencido`, accent: 'var(--color-brass)' },
+    { Icon: IconClock,   value: `$${formatMXN(depositsHeld)}`,          label: 'Depósitos retenidos', accent: 'var(--color-pearl)' },
+    { Icon: IconRevenue, value: `$${formatMXN(avgTicket)}`,             label: 'Ticket promedio', accent: 'var(--color-cloud)' },
   ];
   const byService = [...SERVICES].sort((a, b) => b.monthRevenue - a.monthRevenue);
   const maxSvc = Math.max(...byService.map((s) => s.monthRevenue), 1);
@@ -1249,7 +1415,7 @@ function RevenuePage() {
         <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: '1px solid color-mix(in srgb, var(--color-paper) 5%, transparent)' }}>
           <h3 className="font-display text-[1.05rem]" style={{ color: 'var(--color-paper)' }}>Cuentas por cobrar</h3>
           <span className="font-mono text-[10px] uppercase tracking-[0.18em]" style={{ color: 'var(--color-brass)' }}>
-            {RECEIVABLES.length} pendientes · ${formatMXN(TOTAL_RECEIVABLE)}
+            {receivables.length} pendientes · ${formatMXN(totalReceivable)}
           </span>
         </div>
         <div className="overflow-x-auto">
@@ -1262,7 +1428,14 @@ function RevenuePage() {
               </tr>
             </thead>
             <tbody>
-              {RECEIVABLES.map((b) => (
+              {receivables.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-5 py-12 text-center text-[0.85rem]" style={{ color: 'var(--color-cloud)' }}>
+                    Sin cuentas por cobrar — todo liquidado.
+                  </td>
+                </tr>
+              ) : null}
+              {receivables.map((b) => (
                 <tr key={b.id} className="hover:bg-white/[0.02] transition-colors" data-cursor="hover">
                   <td className="px-5 py-3.5" style={{ borderBottom: '1px solid color-mix(in srgb, var(--color-paper) 3%, transparent)' }}>
                     <div className="flex items-center gap-3">
@@ -1395,38 +1568,581 @@ function TeamPage() {
   );
 }
 
-function AdminDashboard({ onLock }: { onLock: () => void }) {
-  const [page, setPage] = useState<PageId>('dashboard');
+/* ─────────────────────────────────────────────────────────────────────────
+ * MobileNav — bottom tab bar (< md). Five primary pages plus a "Más" sheet
+ * with catálogo/equipo/lock. The sidebar stays desktop-only.
+ * ───────────────────────────────────────────────────────────────────────── */
+
+function MobileNav() {
+  const { page, setPage, lock } = useAdmin();
+  const [moreOpen, setMoreOpen] = useState(false);
+
+  const main: { id: PageId; label: string; Icon: (p: IconProps) => React.JSX.Element }[] = [
+    { id: 'dashboard', label: 'Panel',    Icon: IconDashboard },
+    { id: 'bookings',  label: 'Reservas', Icon: IconBookings },
+    { id: 'clients',   label: 'Clientes', Icon: IconUsers },
+    { id: 'calendar',  label: 'Agenda',   Icon: IconCalendar },
+    { id: 'revenue',   label: 'Ingresos', Icon: IconRevenue },
+  ];
+  const moreActive = page === 'services' || page === 'team';
+  const go = (id: PageId) => {
+    setPage(id);
+    setMoreOpen(false);
+  };
+
+  return (
+    <>
+      <AnimatePresence>
+        {moreOpen && (
+          <motion.div
+            key="more-backdrop"
+            className="fixed inset-0 z-40 md:hidden"
+            style={{ background: 'rgba(10,10,10,0.55)' }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: dur.xs }}
+            onClick={() => setMoreOpen(false)}
+          />
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {moreOpen && (
+          <motion.div
+            key="more-sheet"
+            className="fixed left-3 right-3 z-50 md:hidden rounded-[16px] overflow-hidden"
+            style={{
+              bottom: 'calc(76px + env(safe-area-inset-bottom))',
+              background: 'color-mix(in srgb, var(--color-smoke) 97%, transparent)',
+              border: '1px solid color-mix(in srgb, var(--color-paper) 8%, transparent)',
+              boxShadow: '0 24px 60px -24px rgba(0,0,0,0.7)',
+            }}
+            initial={{ opacity: 0, y: 18, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 18, scale: 0.98 }}
+            transition={{ duration: dur.xs, ease: ease.outExpo }}
+            role="menu"
+            aria-label="Más secciones"
+          >
+            {[
+              { label: 'Servicios & tarifas', Icon: IconSettings,   run: () => go('services') },
+              { label: 'Equipo',              Icon: IconHeadphones, run: () => go('team') },
+            ].map(({ label, Icon, run }) => (
+              <button
+                key={label}
+                type="button"
+                onClick={run}
+                role="menuitem"
+                className="flex items-center gap-3 w-full px-5 py-4 text-left"
+                style={{
+                  color: 'var(--color-paper)',
+                  borderBottom: '1px solid color-mix(in srgb, var(--color-paper) 6%, transparent)',
+                }}
+              >
+                <Icon width={16} height={16} style={{ color: 'var(--color-cloud)' }} />
+                <span className="font-mono text-[11px] uppercase tracking-[0.18em]">{label}</span>
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() => {
+                setMoreOpen(false);
+                lock();
+              }}
+              role="menuitem"
+              className="flex items-center gap-3 w-full px-5 py-4 text-left"
+              style={{ color: 'var(--color-cloud)' }}
+            >
+              <IconLock width={16} height={16} />
+              <span className="font-mono text-[11px] uppercase tracking-[0.18em]">Cerrar sesión</span>
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <nav
+        className="fixed bottom-0 left-0 right-0 z-50 md:hidden"
+        aria-label="Navegación del panel"
+        style={{
+          background: 'color-mix(in srgb, var(--color-ink) 88%, transparent)',
+          backdropFilter: 'blur(18px)',
+          WebkitBackdropFilter: 'blur(18px)',
+          borderTop: '1px solid color-mix(in srgb, var(--color-paper) 7%, transparent)',
+          paddingBottom: 'env(safe-area-inset-bottom)',
+        }}
+      >
+        <div className="grid grid-cols-6">
+          {main.map(({ id, label, Icon }) => {
+            const active = page === id && !moreOpen;
+            return (
+              <button
+                key={id}
+                type="button"
+                onClick={() => go(id)}
+                aria-current={active ? 'page' : undefined}
+                className="flex flex-col items-center gap-1 py-2.5 transition-colors"
+                style={{ color: active ? 'var(--color-signal)' : 'var(--color-cloud)' }}
+              >
+                <Icon width={17} height={17} />
+                <span className="font-mono text-[8.5px] uppercase tracking-[0.1em]">{label}</span>
+              </button>
+            );
+          })}
+          <button
+            type="button"
+            onClick={() => setMoreOpen((v) => !v)}
+            aria-expanded={moreOpen}
+            aria-haspopup="menu"
+            className="flex flex-col items-center gap-1 py-2.5 transition-colors"
+            style={{ color: moreOpen || moreActive ? 'var(--color-signal)' : 'var(--color-cloud)' }}
+          >
+            <IconSettings width={17} height={17} />
+            <span className="font-mono text-[8.5px] uppercase tracking-[0.1em]">Más</span>
+          </button>
+        </div>
+      </nav>
+    </>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * NewBookingModal — the one real "write" of the demo CRM. Creates a booking
+ * in local state; KPIs, tablas, calendario y cobranza reaccionan al instante.
+ * ───────────────────────────────────────────────────────────────────────── */
+
+const MODAL_DEFAULT_DATE = CAL_DAYS[4].key; // viernes de la semana demo
+const HOUR_OPTIONS = Array.from({ length: CAL_END_HOUR - CAL_START_HOUR }, (_, i) => {
+  const h = CAL_START_HOUR + i;
+  return `${String(h).padStart(2, '0')}:00`;
+});
+
+function ModalField({
+  label,
+  htmlFor,
+  active,
+  children,
+}: {
+  label: string;
+  htmlFor: string;
+  active: boolean;
+  children: React.ReactNode;
+}) {
   return (
     <div
-      className="relative min-h-screen w-full"
-      style={{ background: 'var(--color-ink)', color: 'var(--color-paper)' }}
+      className={`field${active ? ' is-active' : ''}`}
+      style={{ borderColor: 'color-mix(in srgb, var(--color-paper) 20%, transparent)', color: 'var(--color-pearl)' }}
     >
-      <div aria-hidden className="absolute inset-0 bg-hairline-grid opacity-30 pointer-events-none" />
-      <AdminSidebar page={page} setPage={setPage} onLock={onLock} />
-      <div className="md:ml-[252px] relative">
-        <Topbar page={page} />
-        <main className="px-6 md:px-10 py-6 md:py-8">
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={page}
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -6 }}
-              transition={{ duration: dur.sm, ease: ease.outExpo }}
+      <label htmlFor={htmlFor} style={{ color: 'var(--color-cloud)' }}>{label}</label>
+      {children}
+    </div>
+  );
+}
+
+const modalInputStyle: React.CSSProperties = { color: 'var(--color-paper)', colorScheme: 'dark' };
+
+function NewBookingModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const { addBooking } = useAdmin();
+  const [client, setClient] = useState('');
+  const [project, setProject] = useState('');
+  const [serviceId, setServiceId] = useState(SERVICES[0].id);
+  const [date, setDate] = useState(MODAL_DEFAULT_DATE);
+  const [time, setTime] = useState('10:00');
+  const [duration, setDuration] = useState(4);
+  const [engineerId, setEngineerId] = useState(ENGINEERS[0].id);
+  const [deposit, setDeposit] = useState(0);
+
+  const service = SERVICES.find((s) => s.id === serviceId) ?? SERVICES[0];
+  const amount = service.unit === 'hora' ? service.rate * duration : service.rate;
+  const clampedDeposit = Math.max(0, Math.min(deposit, amount));
+  const valid = client.trim().length > 1 && Boolean(date) && Boolean(time);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, onClose]);
+
+  const reset = () => {
+    setClient('');
+    setProject('');
+    setServiceId(SERVICES[0].id);
+    setDate(MODAL_DEFAULT_DATE);
+    setTime('10:00');
+    setDuration(4);
+    setEngineerId(ENGINEERS[0].id);
+    setDeposit(0);
+  };
+
+  const handleSubmit = (e: FormEvent) => {
+    e.preventDefault();
+    if (!valid) return;
+    addBooking({
+      client: client.trim(),
+      project: project.trim(),
+      serviceId,
+      date,
+      time,
+      duration,
+      engineerId,
+      deposit: clampedDeposit,
+    });
+    reset();
+  };
+
+  return (
+    <AnimatePresence>
+      {open && (
+        <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center sm:p-6 perspective-1200">
+          <motion.div
+            key="nb-backdrop"
+            className="absolute inset-0"
+            style={{ background: 'rgba(10,10,10,0.62)', backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)' }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: dur.xs }}
+            onClick={onClose}
+          />
+          <motion.div
+            key="nb-panel"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Nueva reservación"
+            className="relative w-full sm:max-w-[560px] max-h-[92vh] overflow-y-auto rounded-t-[20px] sm:rounded-[20px]"
+            style={{
+              background:
+                'linear-gradient(165deg, color-mix(in srgb, var(--color-smoke) 97%, transparent) 0%, color-mix(in srgb, var(--color-ink) 97%, transparent) 100%)',
+              border: '1px solid color-mix(in srgb, var(--color-paper) 9%, transparent)',
+              boxShadow: '0 40px 110px -30px rgba(0,0,0,0.8), 0 0 60px -30px rgba(0,198,41,0.18)',
+            }}
+            initial={{ opacity: 0, y: 36, rotateX: -7, scale: 0.97 }}
+            animate={{ opacity: 1, y: 0, rotateX: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 24, scale: 0.97 }}
+            transition={{ duration: dur.sm, ease: ease.outExpo }}
+          >
+            <div
+              className="flex items-center justify-between px-6 sm:px-8 pt-6 pb-4"
+              style={{ borderBottom: '1px solid color-mix(in srgb, var(--color-paper) 6%, transparent)' }}
             >
-              {page === 'dashboard' && <DashboardPage />}
-              {page === 'bookings' && <BookingsTable />}
-              {page === 'clients' && <ClientsPage />}
-              {page === 'calendar' && <CalendarPage />}
-              {page === 'revenue' && <RevenuePage />}
-              {page === 'services' && <ServicesPage />}
-              {page === 'team' && <TeamPage />}
-            </motion.div>
-          </AnimatePresence>
-        </main>
+              <div>
+                <span className="label" style={{ color: 'var(--color-cloud)' }}>Reservaciones</span>
+                <h3 className="font-display text-[1.4rem] mt-1" style={{ color: 'var(--color-paper)', letterSpacing: '-0.018em' }}>
+                  Nueva <span className="italic-emphasis">reserva.</span>
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={onClose}
+                aria-label="Cerrar"
+                data-cursor="hover"
+                className="w-9 h-9 rounded-full flex items-center justify-center transition-opacity hover:opacity-70"
+                style={{
+                  border: '1px solid color-mix(in srgb, var(--color-paper) 12%, transparent)',
+                  color: 'var(--color-paper)',
+                }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmit} className="px-6 sm:px-8 py-6 flex flex-col gap-5">
+              <div className="grid gap-x-6 gap-y-4 sm:grid-cols-2">
+                <ModalField label="Cliente *" htmlFor="nb-client" active={client.length > 0}>
+                  <input
+                    id="nb-client"
+                    type="text"
+                    value={client}
+                    onChange={(e) => setClient(e.target.value)}
+                    autoComplete="off"
+                    autoFocus
+                    style={modalInputStyle}
+                  />
+                </ModalField>
+                <ModalField label="Proyecto" htmlFor="nb-project" active={project.length > 0}>
+                  <input
+                    id="nb-project"
+                    type="text"
+                    value={project}
+                    onChange={(e) => setProject(e.target.value)}
+                    autoComplete="off"
+                    placeholder=""
+                    style={modalInputStyle}
+                  />
+                </ModalField>
+                <ModalField label="Servicio" htmlFor="nb-service" active>
+                  <select id="nb-service" value={serviceId} onChange={(e) => setServiceId(e.target.value)} style={modalInputStyle}>
+                    {SERVICES.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name} — ${formatMXN(s.rate)}/{s.unit}
+                      </option>
+                    ))}
+                  </select>
+                </ModalField>
+                <ModalField label="Ingeniero" htmlFor="nb-engineer" active>
+                  <select id="nb-engineer" value={engineerId} onChange={(e) => setEngineerId(e.target.value)} style={modalInputStyle}>
+                    {ENGINEERS.map((e) => (
+                      <option key={e.id} value={e.id}>{e.name}</option>
+                    ))}
+                  </select>
+                </ModalField>
+                <ModalField label="Fecha *" htmlFor="nb-date" active>
+                  <input id="nb-date" type="date" value={date} onChange={(e) => setDate(e.target.value)} style={modalInputStyle} />
+                </ModalField>
+                <ModalField label="Hora de inicio" htmlFor="nb-time" active>
+                  <select id="nb-time" value={time} onChange={(e) => setTime(e.target.value)} style={modalInputStyle}>
+                    {HOUR_OPTIONS.map((h) => (
+                      <option key={h} value={h}>{h}</option>
+                    ))}
+                  </select>
+                </ModalField>
+                <ModalField label="Duración (horas)" htmlFor="nb-duration" active>
+                  <input
+                    id="nb-duration"
+                    type="number"
+                    min={1}
+                    max={12}
+                    value={duration}
+                    onChange={(e) => setDuration(Math.max(1, Math.min(12, Number(e.target.value) || 1)))}
+                    style={modalInputStyle}
+                  />
+                </ModalField>
+                <ModalField label="Depósito (MXN)" htmlFor="nb-deposit" active>
+                  <input
+                    id="nb-deposit"
+                    type="number"
+                    min={0}
+                    step={500}
+                    value={deposit}
+                    onChange={(e) => setDeposit(Math.max(0, Number(e.target.value) || 0))}
+                    style={modalInputStyle}
+                  />
+                </ModalField>
+              </div>
+
+              {/* Live summary — total + resulting status */}
+              <div
+                className="flex flex-wrap items-center justify-between gap-3 rounded-[12px] px-4 py-3"
+                style={{
+                  background: 'color-mix(in srgb, var(--color-signal) 7%, transparent)',
+                  border: '1px solid color-mix(in srgb, var(--color-signal) 18%, transparent)',
+                }}
+              >
+                <div className="flex items-baseline gap-2">
+                  <span className="font-mono text-[10px] uppercase tracking-[0.18em]" style={{ color: 'var(--color-cloud)' }}>Total</span>
+                  <span className="font-display text-[1.3rem]" style={{ color: 'var(--color-signal)', letterSpacing: '-0.02em' }}>
+                    ${formatMXN(amount)}
+                  </span>
+                  <span className="font-mono text-[10px]" style={{ color: 'var(--color-mist)' }}>MXN</span>
+                </div>
+                <span className="font-mono text-[10px] uppercase tracking-[0.16em]" style={{ color: 'var(--color-cloud)' }}>
+                  {clampedDeposit > 0 ? `Confirmada · depósito $${formatMXN(clampedDeposit)}` : 'Pendiente de depósito'}
+                </span>
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-1">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  data-cursor="hover"
+                  className="px-5 py-3 rounded-full font-mono text-[11px] uppercase tracking-[0.2em] transition-opacity hover:opacity-70"
+                  style={{ border: '1px solid color-mix(in srgb, var(--color-paper) 14%, transparent)', color: 'var(--color-cloud)' }}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={!valid}
+                  data-cursor="signal"
+                  className="inline-flex items-center gap-2.5 px-5 py-3 rounded-full font-mono text-[11px] uppercase tracking-[0.2em] font-medium transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
+                  style={{
+                    background: 'var(--color-signal)',
+                    color: 'var(--color-ink)',
+                    boxShadow: '0 12px 36px -14px rgba(0,198,41,0.55)',
+                  }}
+                >
+                  <IconCheck width={13} height={13} strokeWidth={2} />
+                  Crear reservación
+                </button>
+              </div>
+            </form>
+          </motion.div>
+        </div>
+      )}
+    </AnimatePresence>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * Toast + PageSkeleton — feedback y estado de carga del shell.
+ * ───────────────────────────────────────────────────────────────────────── */
+
+function Toast({ message }: { message: string | null }) {
+  return (
+    <div
+      className="fixed z-[70] left-0 right-0 flex justify-center pointer-events-none bottom-[calc(84px_+_env(safe-area-inset-bottom))] md:bottom-8"
+    >
+      <AnimatePresence>
+        {message && (
+          <motion.div
+            key={message}
+            initial={{ opacity: 0, y: 14, scale: 0.97 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 8, scale: 0.98 }}
+            transition={{ duration: dur.xs, ease: ease.outExpo }}
+            className="pointer-events-auto inline-flex items-center gap-2.5 px-4 py-2.5 rounded-full mx-4"
+            style={{
+              background: 'color-mix(in srgb, var(--color-smoke) 97%, transparent)',
+              border: '1px solid color-mix(in srgb, var(--color-signal) 25%, transparent)',
+              boxShadow: '0 18px 48px -18px rgba(0,0,0,0.65)',
+            }}
+            role="status"
+          >
+            <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: 'var(--color-signal)' }} />
+            <span className="font-mono text-[10px] uppercase tracking-[0.16em]" style={{ color: 'var(--color-paper)' }}>
+              {message}
+            </span>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+function PageSkeleton() {
+  const block: React.CSSProperties = {
+    background: 'color-mix(in srgb, var(--color-paper) 4%, transparent)',
+    border: '1px solid color-mix(in srgb, var(--color-paper) 4%, transparent)',
+  };
+  return (
+    <div className="animate-pulse" aria-hidden>
+      <div className="grid gap-4 mb-6" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div key={i} className="rounded-[14px] h-[124px]" style={block} />
+        ))}
+      </div>
+      <div className="rounded-[14px] h-[248px] mb-6" style={block} />
+      <div className="grid gap-6 [grid-template-columns:1fr] xl:[grid-template-columns:1fr_380px]">
+        <div className="rounded-[14px] h-[320px]" style={block} />
+        <div className="rounded-[14px] h-[320px]" style={block} />
       </div>
     </div>
+  );
+}
+
+function AdminDashboard({ onLock }: { onLock: () => void }) {
+  const [page, setPage] = useState<PageId>('dashboard');
+  const [bookings, setBookings] = useState<Booking[]>(BOOKINGS);
+  const [activities, setActivities] = useState<Activity[]>(ACTIVITIES);
+  const [query, setQuery] = useState('');
+  const [modalOpen, setModalOpen] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  // Simulated first fetch so the shell exercises its loading skeleton.
+  useEffect(() => {
+    const t = window.setTimeout(() => setLoading(false), 700);
+    return () => window.clearTimeout(t);
+  }, []);
+
+  // Toast auto-dismiss.
+  useEffect(() => {
+    if (!toast) return;
+    const t = window.setTimeout(() => setToast(null), 3200);
+    return () => window.clearTimeout(t);
+  }, [toast]);
+
+  const addBooking = useCallback((draft: NewBookingDraft) => {
+    const service = SERVICES.find((s) => s.id === draft.serviceId) ?? SERVICES[0];
+    const amount = service.unit === 'hora' ? service.rate * draft.duration : service.rate;
+    const deposit = Math.max(0, Math.min(draft.deposit, amount));
+    setBookings((prev) => {
+      const id = prev.reduce((m, b) => Math.max(m, b.id), 0) + 1;
+      const booking: Booking = {
+        id,
+        client: draft.client,
+        project: draft.project || `Sesión · ${service.name}`,
+        service: service.name,
+        date: draft.date,
+        time: draft.time,
+        duration: draft.duration,
+        status: deposit > 0 ? 'confirmed' : 'pending',
+        amount,
+        deposit,
+        paymentStatus: deposit >= amount ? 'paid' : deposit > 0 ? 'deposit' : 'pending',
+        room: service.room,
+        engineerId: draft.engineerId,
+        genre: 'Por definir',
+        accent: ACCENT_CYCLE[id % ACCENT_CYCLE.length],
+      };
+      return [booking, ...prev];
+    });
+    setActivities((prev) => [
+      { actor: draft.client, text: `reservó ${service.name} para el ${formatDateMX(draft.date)}.`, time: 'Ahora', tone: 'signal' },
+      ...prev,
+    ]);
+    setToast(deposit > 0 ? 'Reservación confirmada con depósito' : 'Reservación creada · pendiente de depósito');
+    setModalOpen(false);
+    setPage('bookings');
+  }, []);
+
+  const value: AdminState = {
+    bookings,
+    activities,
+    query,
+    setQuery,
+    loading,
+    page,
+    setPage,
+    openNewBooking: () => setModalOpen(true),
+    addBooking,
+    notify: setToast,
+    lock: onLock,
+  };
+
+  return (
+    <AdminContext.Provider value={value}>
+      <div
+        className="relative min-h-screen w-full"
+        style={{ background: 'var(--color-ink)', color: 'var(--color-paper)' }}
+      >
+        <div aria-hidden className="absolute inset-0 bg-hairline-grid opacity-30 pointer-events-none" />
+        <AdminSidebar />
+        <div className="md:ml-[252px] relative">
+          <Topbar />
+          <main className="px-5 md:px-10 py-6 md:py-8 pb-28 md:pb-10">
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={loading ? 'skeleton' : page}
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -6 }}
+                transition={{ duration: dur.sm, ease: ease.outExpo }}
+              >
+                {loading ? (
+                  <PageSkeleton />
+                ) : (
+                  <>
+                    {page === 'dashboard' && <DashboardPage />}
+                    {page === 'bookings' && <BookingsTable />}
+                    {page === 'clients' && <ClientsPage />}
+                    {page === 'calendar' && <CalendarPage />}
+                    {page === 'revenue' && <RevenuePage />}
+                    {page === 'services' && <ServicesPage />}
+                    {page === 'team' && <TeamPage />}
+                  </>
+                )}
+              </motion.div>
+            </AnimatePresence>
+          </main>
+        </div>
+        <MobileNav />
+        <NewBookingModal open={modalOpen} onClose={() => setModalOpen(false)} />
+        <Toast message={toast} />
+      </div>
+    </AdminContext.Provider>
   );
 }
 
@@ -1434,13 +2150,37 @@ function AdminDashboard({ onLock }: { onLock: () => void }) {
  * Default export — the route entry point.
  * ───────────────────────────────────────────────────────────────────────── */
 
+const UNLOCK_KEY = 'malonic-admin-unlocked';
+
+/** sessionStorage can throw under strict privacy modes — degrade to in-memory. */
+const readUnlocked = (): boolean => {
+  try {
+    return typeof window !== 'undefined' && window.sessionStorage.getItem(UNLOCK_KEY) === '1';
+  } catch {
+    return false;
+  }
+};
+
 export function Admin() {
-  const [unlocked, setUnlocked] = useState(false);
+  const [unlocked, setUnlocked] = useState<boolean>(readUnlocked);
 
   useEffect(() => {
     document.body.dataset.theme = 'dark';
     document.title = 'Malonic CRM · Admin';
   }, []);
+
+  const unlock = () => {
+    try {
+      window.sessionStorage.setItem(UNLOCK_KEY, '1');
+    } catch { /* in-memory only */ }
+    setUnlocked(true);
+  };
+  const lock = () => {
+    try {
+      window.sessionStorage.removeItem(UNLOCK_KEY);
+    } catch { /* in-memory only */ }
+    setUnlocked(false);
+  };
 
   return (
     <AnimatePresence mode="wait">
@@ -1451,7 +2191,7 @@ export function Admin() {
           animate={{ opacity: 1 }}
           exit={{ opacity: 0, transition: { duration: dur.sm, ease: ease.outExpo } }}
         >
-          <AccessScreen onUnlock={() => setUnlocked(true)} />
+          <AccessScreen onUnlock={unlock} />
         </motion.div>
       ) : (
         <motion.div
@@ -1460,7 +2200,7 @@ export function Admin() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: dur.md, ease: ease.outExpo }}
         >
-          <AdminDashboard onLock={() => setUnlocked(false)} />
+          <AdminDashboard onLock={lock} />
         </motion.div>
       )}
     </AnimatePresence>
