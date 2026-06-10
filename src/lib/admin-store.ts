@@ -22,12 +22,16 @@ export type AvatarAccent = 'signal' | 'brass' | 'pearl' | 'paper';
 
 export type Role = 'admin' | 'staff';
 
+export type PassAlgo = 'sha256' | 'pbkdf2-100k';
+
 export type UserAccount = {
   id: string;
   name: string;
   username: string;
   passHash: string;
   salt: string;
+  /** Hashing scheme; ausente = legacy sha256 (cuentas pre-PBKDF2). */
+  algo?: PassAlgo;
   role: Role;
   createdAt: string;
 };
@@ -479,21 +483,46 @@ export function clientStatsOf(list: Booking[], client: Client): { sessions: numb
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
- * Auth — SHA-256(salt + password) via Web Crypto.
- * NOTE: gating only. Data lives client-side; real multi-user security
- * arrives with the backend phase.
+ * Auth — PBKDF2-SHA256 (100k iteraciones) via Web Crypto; las cuentas
+ * legacy con SHA-256 simple siguen verificando y se re-hashean al iniciar
+ * sesión. NOTE: gating only — data lives client-side; real multi-user
+ * security arrives with the backend phase.
  * ───────────────────────────────────────────────────────────────────────── */
 
-export async function hashPassword(password: string, salt: string): Promise<string> {
+export const PASS_ALGO_CURRENT: PassAlgo = 'pbkdf2-100k';
+const PBKDF2_ITERATIONS = 100_000;
+
+const toHex = (buf: ArrayBuffer): string =>
+  [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
+
+/** Legacy (v1) — kept only to verify accounts created before PBKDF2. */
+export async function hashPasswordLegacy(password: string, salt: string): Promise<string> {
   const data = new TextEncoder().encode(`${salt}:${password}`);
-  const digest = await crypto.subtle.digest('SHA-256', data);
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+  return toHex(await crypto.subtle.digest('SHA-256', data));
 }
 
-export const makeSalt = (): string => uid().replace(/-/g, '').slice(0, 16);
+export async function hashPassword(password: string, salt: string): Promise<string> {
+  const enc = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveBits']);
+  const bits = await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', salt: enc.encode(salt), iterations: PBKDF2_ITERATIONS, hash: 'SHA-256' },
+    keyMaterial,
+    256,
+  );
+  return toHex(bits);
+}
+
+export const makeSalt = (): string => {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+};
 
 export async function verifyPassword(password: string, user: UserAccount): Promise<boolean> {
-  const h = await hashPassword(password, user.salt);
+  const h =
+    user.algo === 'pbkdf2-100k'
+      ? await hashPassword(password, user.salt)
+      : await hashPasswordLegacy(password, user.salt);
   return h === user.passHash;
 }
 

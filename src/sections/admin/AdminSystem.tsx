@@ -158,7 +158,7 @@ function AddUserModal({ open, onClose, onSave }: { open: boolean; onClose: () =>
       <form onSubmit={submit} className="px-6 sm:px-8 py-6 flex flex-col gap-5">
         <div className="grid gap-x-6 gap-y-4 sm:grid-cols-2">
           <Field label="Nombre *" htmlFor="us-name" active={name.length > 0}>
-            <input id="us-name" type="text" value={name} onChange={(e) => setName(e.target.value)} autoComplete="off" style={fieldInputStyle} />
+            <input id="us-name" type="text" value={name} onChange={(e) => setName(e.target.value)} autoComplete="off" autoFocus style={fieldInputStyle} />
           </Field>
           <Field label="Usuario *" htmlFor="us-user" active={username.length > 0} hint="Para iniciar sesión, ej. nico">
             <input id="us-user" type="text" value={username} onChange={(e) => setUsername(e.target.value.toLowerCase().replace(/\s+/g, ''))} autoComplete="off" style={fieldInputStyle} />

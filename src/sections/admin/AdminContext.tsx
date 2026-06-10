@@ -15,6 +15,7 @@ import {
   hashPassword,
   makeSalt,
   verifyPassword,
+  PASS_ALGO_CURRENT,
   SESSION_KEY,
   BASE_CATALOG,
   type Activity,
@@ -211,6 +212,7 @@ export function AdminProvider({ children, onLocked }: { children: React.ReactNod
         username: username.trim().toLowerCase(),
         passHash,
         salt,
+        algo: PASS_ALGO_CURRENT,
         role: 'admin',
         createdAt: nowISO(),
       };
@@ -230,11 +232,20 @@ export function AdminProvider({ children, onLocked }: { children: React.ReactNod
       if (!user) return false;
       const ok = await verifyPassword(password, user);
       if (!ok) return false;
+      // Re-hash legacy (sha256) accounts to the current scheme on login.
+      if (user.algo !== PASS_ALGO_CURRENT) {
+        const salt = makeSalt();
+        const passHash = await hashPassword(password, salt);
+        mutate((s) => ({
+          ...s,
+          users: s.users.map((u) => (u.id === user.id ? { ...u, salt, passHash, algo: PASS_ALGO_CURRENT } : u)),
+        }));
+      }
       writeSession(user.id);
       setSessionUserId(user.id);
       return true;
     },
-    [store.users],
+    [store.users, mutate],
   );
 
   const logout = useCallback(() => {
@@ -530,7 +541,7 @@ export function AdminProvider({ children, onLocked }: { children: React.ReactNod
       }
       const salt = makeSalt();
       const passHash = await hashPassword(password, salt);
-      const user: UserAccount = { id: uid(), name: name.trim(), username: uname, passHash, salt, role, createdAt: nowISO() };
+      const user: UserAccount = { id: uid(), name: name.trim(), username: uname, passHash, salt, algo: PASS_ALGO_CURRENT, role, createdAt: nowISO() };
       mutate(
         (s) => ({ ...s, users: [...s.users, user] }),
         { actor: user.name, text: `cuenta ${role === 'admin' ? 'de administrador' : 'de staff'} creada.`, tone: 'pearl' },
@@ -547,7 +558,7 @@ export function AdminProvider({ children, onLocked }: { children: React.ReactNod
       const passHash = await hashPassword(password, salt);
       mutate((s) => ({
         ...s,
-        users: s.users.map((u) => (u.id === userId ? { ...u, salt, passHash } : u)),
+        users: s.users.map((u) => (u.id === userId ? { ...u, salt, passHash, algo: PASS_ALGO_CURRENT } : u)),
       }));
       setToast('Contraseña actualizada');
     },

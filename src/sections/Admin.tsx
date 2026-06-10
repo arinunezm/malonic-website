@@ -620,6 +620,36 @@ function MobileNav() {
  * Shell + router
  * ───────────────────────────────────────────────────────────────────────── */
 
+/** Mobile-only search row (the topbar field is hidden < sm). */
+function MobileSearch() {
+  const { page, query, setQuery } = useAdmin();
+  if (!SEARCH_PAGES.includes(page)) return null;
+  return (
+    <div className="sm:hidden px-5 pt-4">
+      <div
+        className="flex items-center gap-2 px-3 py-2.5 rounded-full"
+        style={{ background: 'color-mix(in srgb, var(--color-paper) 4%, transparent)', border: '1px solid color-mix(in srgb, var(--color-paper) 8%, transparent)' }}
+      >
+        <IconSearch width={14} height={14} style={{ color: 'var(--color-cloud)', flexShrink: 0 }} />
+        <input
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Buscar…"
+          aria-label="Buscar en el CRM"
+          className="bg-transparent outline-none border-0 text-[0.9rem] w-full"
+          style={{ color: 'var(--color-paper)' }}
+        />
+        {query ? (
+          <button type="button" onClick={() => setQuery('')} aria-label="Limpiar búsqueda" className="font-mono text-[12px] leading-none px-1 opacity-60" style={{ color: 'var(--color-paper)' }}>
+            ✕
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 function AdminShell() {
   const { page, loading, toast } = useAdmin();
   return (
@@ -628,6 +658,7 @@ function AdminShell() {
       <AdminSidebar />
       <div className="md:ml-[252px] relative">
         <Topbar />
+        {!loading && <MobileSearch />}
         <main className="px-5 md:px-10 py-6 md:py-8 pb-28 md:pb-10">
           {/* Keyed remount per page → entry fade. No AnimatePresence exit:
               full-tree swaps stalled onExitComplete under provider re-renders. */}

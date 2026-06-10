@@ -113,7 +113,7 @@ export function ClientsPage() {
                       {[c.artist, c.genre].filter(Boolean).join(' · ') || c.email || '—'}
                     </div>
                   </div>
-                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                  <div className="flex items-center gap-1 md:opacity-0 md:group-hover:opacity-100 md:focus-within:opacity-100 transition-opacity">
                     <button type="button" onClick={() => setEditing(c)} title="Editar" aria-label={`Editar ${c.name}`} data-cursor="hover" className="w-7 h-7 rounded-full flex items-center justify-center hover:bg-white/[0.06]" style={{ color: 'var(--color-cloud)' }}>
                       <IconEdit width={13} height={13} />
                     </button>
@@ -186,7 +186,7 @@ function ClientModal({ draft, onClose, onSave }: { draft: ClientDraft | null; on
       >
         <div className="grid gap-x-6 gap-y-4 sm:grid-cols-2">
           <Field label="Nombre *" htmlFor="cl-name" active={(form.name ?? '').length > 0}>
-            <input id="cl-name" type="text" value={form.name} onChange={set('name')} autoComplete="off" style={fieldInputStyle} />
+            <input id="cl-name" type="text" value={form.name} onChange={set('name')} autoComplete="off" autoFocus style={fieldInputStyle} />
           </Field>
           <Field label="Artista / proyecto" htmlFor="cl-artist" active={!!form.artist}>
             <input id="cl-artist" type="text" value={form.artist ?? ''} onChange={set('artist')} autoComplete="off" style={fieldInputStyle} />
@@ -287,7 +287,7 @@ export function ServicesPage() {
                       <IconEdit width={11} height={11} style={{ display: 'inline', marginRight: 4, verticalAlign: '-1px' }} />
                       Editar tarifa
                     </button>
-                    <button type="button" onClick={() => setConfirmId(s.id)} title="Eliminar" aria-label={`Eliminar ${s.name}`} data-cursor="hover" className="w-6 h-6 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-70 hover:!opacity-100 transition-opacity" style={{ color: 'var(--color-cloud)' }}>
+                    <button type="button" onClick={() => setConfirmId(s.id)} title="Eliminar" aria-label={`Eliminar ${s.name}`} data-cursor="hover" className="w-6 h-6 rounded-full flex items-center justify-center opacity-70 md:opacity-0 md:group-hover:opacity-70 hover:!opacity-100 transition-opacity" style={{ color: 'var(--color-cloud)' }}>
                       <IconTrash width={12} height={12} />
                     </button>
                   </div>
@@ -336,7 +336,7 @@ function ServiceModal({ draft, onClose, onSave }: { draft: ServiceDraft | null; 
         <div className="grid gap-x-6 gap-y-4 sm:grid-cols-2">
           <div className="sm:col-span-2">
             <Field label="Nombre del servicio *" htmlFor="sv-name" active={form.name.length > 0}>
-              <input id="sv-name" type="text" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} autoComplete="off" style={fieldInputStyle} />
+              <input id="sv-name" type="text" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} autoComplete="off" autoFocus style={fieldInputStyle} />
             </Field>
           </div>
           <Field label="Tarifa (MXN) *" htmlFor="sv-rate" active>

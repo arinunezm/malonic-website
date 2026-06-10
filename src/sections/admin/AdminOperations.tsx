@@ -265,7 +265,7 @@ export function BookingModal() {
         <form onSubmit={submit} className="px-6 sm:px-8 py-6 flex flex-col gap-5">
           <div className="grid gap-x-6 gap-y-4 sm:grid-cols-2">
             <Field label="Cliente *" htmlFor="bk-client" active={clientName.length > 0}>
-              <input id="bk-client" type="text" value={clientName} onChange={(e) => { setClientName(e.target.value); setClientId(''); }} autoComplete="off" style={fieldInputStyle} />
+              <input id="bk-client" type="text" value={clientName} onChange={(e) => { setClientName(e.target.value); setClientId(''); }} autoComplete="off" autoFocus style={fieldInputStyle} />
             </Field>
             {store.clients.length > 0 ? (
               <Field label="…o elige uno existente" htmlFor="bk-client-pick" active>
@@ -505,7 +505,8 @@ function BookingRow({ b, onEdit, onDelete, onStatus, onPaid }: { b: Booking; onE
       <td className="px-5 py-3.5" style={cell}><PaymentPill status={b.paymentStatus} /></td>
       <td className="px-5 py-3.5" style={cell}><StatusPill status={b.status} /></td>
       <td className="px-5 py-3.5" style={cell}>
-        <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+        {/* Always visible on touch (<md); hover-revealed on desktop */}
+        <div className="flex items-center justify-end gap-1 md:opacity-0 md:group-hover:opacity-100 md:focus-within:opacity-100 transition-opacity">
           {b.status === 'pending' && (
             <RowAction title="Confirmar" onClick={() => onStatus('confirmed')}><IconCheck width={13} height={13} /></RowAction>
           )}
