@@ -5,7 +5,7 @@
  * (public booking form in another tab) re-hydrate via the storage event.
  */
 
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   loadStore,
   onStoreChanged,
@@ -30,6 +30,22 @@ import {
   type WebRequest,
   type RequestStatus,
 } from '../../lib/admin-store';
+import { cloudConfigured } from '../../lib/cloud-env';
+import {
+  cloudDeletePost,
+  cloudFetchAllPosts,
+  cloudFetchRequests,
+  cloudOnNewRequest,
+  cloudPullDocument,
+  cloudPushDocument,
+  cloudSession,
+  cloudSignIn,
+  cloudSignOut,
+  cloudUpdateRequestStatus,
+  cloudUpsertPost,
+  operationalOf,
+  type CloudUser,
+} from '../../lib/cloud';
 
 export type PageId =
   | 'dashboard'
@@ -77,6 +93,13 @@ export type BookingDraft = {
 type AdminState = {
   store: StoreData;
   currentUser: UserAccount | null;
+
+  /** true cuando el deploy opera contra Supabase (fase 1 activada). */
+  cloud: boolean;
+  /** false mientras se restaura la sesión cloud al boot. */
+  cloudReady: boolean;
+  /** Sesión viva detectada al boot (local o cloud): saltar la access card. */
+  bootRestored: boolean;
 
   page: PageId;
   setPage: (p: PageId) => void;
@@ -150,13 +173,22 @@ const writeSession = (id: string | null) => {
 };
 
 export function AdminProvider({ children, onLocked }: { children: React.ReactNode; onLocked: () => void }) {
+  const cloud = cloudConfigured;
   const [store, setStore] = useState<StoreData>(() => loadStore());
   const [sessionUserId, setSessionUserId] = useState<string | null>(() => readSession());
+  const [cloudUser, setCloudUser] = useState<CloudUser | null>(null);
+  const [cloudReady, setCloudReady] = useState(!cloud);
+  const [bootRestored, setBootRestored] = useState<boolean>(() => !cloud && readSession() !== null);
   const [page, setPage] = useState<PageId>('dashboard');
   const [query, setQuery] = useState('');
   const [toast, setToast] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [bookingModal, setBookingModal] = useState<BookingDraft | null>(null);
+
+  // Refs estables para closures (mutate es useCallback([])).
+  const cloudUserRef = useRef<CloudUser | null>(null);
+  cloudUserRef.current = cloudUser;
+  const pushTimer = useRef<number | undefined>(undefined);
 
   useEffect(() => {
     const t = window.setTimeout(() => setLoading(false), 550);
@@ -169,15 +201,92 @@ export function AdminProvider({ children, onLocked }: { children: React.ReactNod
     return () => window.clearTimeout(t);
   }, [toast]);
 
-  // Re-hydrate when the public site (another tab) writes a request.
-  useEffect(() => onStoreChanged(() => setStore(loadStore())), []);
+  // Modo local: re-hidratar cuando el sitio público (otra pestaña) escribe.
+  useEffect(() => {
+    if (cloud) return;
+    return onStoreChanged(() => setStore(loadStore()));
+  }, [cloud]);
 
-  const currentUser = useMemo(
-    () => store.users.find((u) => u.id === sessionUserId) ?? null,
-    [store.users, sessionUserId],
-  );
+  /** Nube → estado: documento operativo + requests + posts. */
+  const hydrateFromCloud = useCallback(async () => {
+    const [docRes, requests, posts] = await Promise.all([
+      cloudPullDocument(),
+      cloudFetchRequests(),
+      cloudFetchAllPosts(),
+    ]);
+    let firstPush = false;
+    setStore((prev) => {
+      const next: StoreData = {
+        ...prev,
+        ...(docRes ? docRes.doc : {}),
+        requests,
+        posts,
+      };
+      persistStore(next); // cache local de respaldo
+      firstPush = !docRes && (prev.bookings.length > 0 || prev.clients.length > 0 || prev.services.length > 0);
+      if (firstPush) {
+        // Primer dispositivo con data local previa: migrarla a la nube.
+        void cloudPushDocument(operationalOf(next)).catch(() => {});
+      }
+      return next;
+    });
+  }, []);
 
-  /** All mutations flow through here: update → persist → optional activity. */
+  // Boot cloud: restaurar sesión Supabase y, si existe, hidratar.
+  useEffect(() => {
+    if (!cloud) return;
+    let alive = true;
+    (async () => {
+      try {
+        const user = await cloudSession();
+        if (!alive) return;
+        if (user) {
+          setCloudUser(user);
+          setBootRestored(true);
+          await hydrateFromCloud();
+        }
+      } catch {
+        if (alive) setToast('⚠ Sin conexión con la nube — modo lectura local');
+      } finally {
+        if (alive) setCloudReady(true);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [cloud, hydrateFromCloud]);
+
+  // Realtime: solicitudes nuevas de visitantes → badge + toast al instante.
+  useEffect(() => {
+    if (!cloud || !cloudUser) return;
+    const off = cloudOnNewRequest((req) => {
+      setStore((prev) =>
+        prev.requests.some((r) => r.id === req.id) ? prev : { ...prev, requests: [req, ...prev.requests] },
+      );
+      setToast(`Nueva solicitud de ${req.name}`);
+    });
+    return off;
+  }, [cloud, cloudUser]);
+
+  const currentUser = useMemo<UserAccount | null>(() => {
+    if (cloud) {
+      if (!cloudUser) return null;
+      // Adaptador: la UI consume UserAccount (name/role/username/id).
+      return {
+        id: cloudUser.id,
+        name: cloudUser.name,
+        username: cloudUser.email,
+        passHash: '',
+        salt: '',
+        algo: PASS_ALGO_CURRENT,
+        role: cloudUser.role,
+        createdAt: '',
+      };
+    }
+    return store.users.find((u) => u.id === sessionUserId) ?? null;
+  }, [cloud, cloudUser, store.users, sessionUserId]);
+
+  /** All mutations flow through here: update → persist → optional activity → push nube. */
   const mutate = useCallback(
     (fn: (s: StoreData) => StoreData, activity?: Omit<Activity, 'id' | 'at'>) => {
       setStore((prev) => {
@@ -193,6 +302,16 @@ export function AdminProvider({ children, onLocked }: { children: React.ReactNod
             () => setToast('⚠ Almacenamiento lleno — exporta un respaldo y libera espacio'),
             0,
           );
+        }
+        // Doc-sync (debounce): clients/services/bookings/activities a Supabase.
+        if (cloudConfigured && cloudUserRef.current) {
+          const snapshot = operationalOf(next);
+          window.clearTimeout(pushTimer.current);
+          pushTimer.current = window.setTimeout(() => {
+            cloudPushDocument(snapshot).catch(() =>
+              setToast('⚠ Sin conexión — cambios guardados localmente'),
+            );
+          }, 800);
         }
         return next;
       });
@@ -228,6 +347,17 @@ export function AdminProvider({ children, onLocked }: { children: React.ReactNod
 
   const login = useCallback(
     async (username: string, password: string): Promise<boolean> => {
+      if (cloud) {
+        try {
+          const user = await cloudSignIn(username, password);
+          if (!user) return false;
+          setCloudUser(user);
+          await hydrateFromCloud();
+          return true;
+        } catch {
+          return false;
+        }
+      }
       const user = store.users.find((u) => u.username === username.trim().toLowerCase());
       if (!user) return false;
       const ok = await verifyPassword(password, user);
@@ -245,16 +375,21 @@ export function AdminProvider({ children, onLocked }: { children: React.ReactNod
       setSessionUserId(user.id);
       return true;
     },
-    [store.users, mutate],
+    [cloud, hydrateFromCloud, store.users, mutate],
   );
 
   const logout = useCallback(() => {
+    if (cloud) {
+      void cloudSignOut().catch(() => {});
+      setCloudUser(null);
+    }
     writeSession(null);
     setSessionUserId(null);
+    setBootRestored(false);
     setPage('dashboard');
     setQuery('');
     onLocked();
-  }, [onLocked]);
+  }, [cloud, onLocked]);
 
   /* ── bookings ─────────────────────────────────────────────────────── */
 
@@ -328,6 +463,10 @@ export function AdminProvider({ children, onLocked }: { children: React.ReactNod
         text: draft.id ? 'reservación actualizada.' : `nueva reservación · ${draft.date}.`,
         tone: 'signal',
       });
+      // Solicitud convertida → reflejar en la nube (su tabla es aparte del doc).
+      if (draft.requestId && cloudConfigured && cloudUserRef.current) {
+        cloudUpdateRequestStatus(draft.requestId, 'converted').catch(() => {});
+      }
       setToast(draft.id ? 'Reservación actualizada' : 'Reservación creada');
       setBookingModal(null);
     },
@@ -464,6 +603,25 @@ export function AdminProvider({ children, onLocked }: { children: React.ReactNod
 
   /* ── posts ────────────────────────────────────────────────────────── */
 
+  /** Upsert a la nube (sube portada dataURL → URL) y refleja la URL local. */
+  const syncPostToCloud = useCallback((post: BlogPost) => {
+    if (!cloudConfigured || !cloudUserRef.current) return;
+    cloudUpsertPost(post)
+      .then((remote) => {
+        if (remote.cover !== post.cover) {
+          setStore((s) => {
+            const next = {
+              ...s,
+              posts: s.posts.map((x) => (x.id === post.id ? { ...x, cover: remote.cover } : x)),
+            };
+            persistStore(next);
+            return next;
+          });
+        }
+      })
+      .catch((e: Error) => setToast(`⚠ Blog sin sincronizar: ${e.message}`));
+  }, []);
+
   const savePost = useCallback<AdminState['savePost']>(
     (p) => {
       const now = nowISO();
@@ -485,35 +643,45 @@ export function AdminProvider({ children, onLocked }: { children: React.ReactNod
         ...s,
         posts: p.id ? s.posts.map((x) => (x.id === p.id ? saved : x)) : [saved, ...s.posts],
       }));
+      syncPostToCloud(saved);
       setToast(p.id ? 'Entrada guardada' : 'Borrador creado');
       return saved;
     },
-    [mutate, store.posts],
+    [mutate, store.posts, syncPostToCloud],
   );
 
   const setPostStatus = useCallback<AdminState['setPostStatus']>(
     (id, status) => {
+      const existing = store.posts.find((x) => x.id === id);
+      const updated: BlogPost | undefined = existing
+        ? {
+            ...existing,
+            status,
+            publishedAt: status === 'published' ? existing.publishedAt ?? nowISO() : existing.publishedAt,
+            updatedAt: nowISO(),
+          }
+        : undefined;
       mutate(
         (s) => ({
           ...s,
-          posts: s.posts.map((x) =>
-            x.id === id
-              ? { ...x, status, publishedAt: status === 'published' ? x.publishedAt ?? nowISO() : x.publishedAt, updatedAt: nowISO() }
-              : x,
-          ),
+          posts: s.posts.map((x) => (x.id === id && updated ? updated : x)),
         }),
         status === 'published'
           ? { text: 'entrada de blog publicada en el sitio.', tone: 'signal' }
           : undefined,
       );
+      if (updated) syncPostToCloud(updated);
       setToast(status === 'published' ? 'Publicado en malonicrecords /blog' : 'Movido a borradores');
     },
-    [mutate],
+    [mutate, store.posts, syncPostToCloud],
   );
 
   const deletePost = useCallback<AdminState['deletePost']>(
     (id) => {
       mutate((s) => ({ ...s, posts: s.posts.filter((x) => x.id !== id) }));
+      if (cloudConfigured && cloudUserRef.current) {
+        cloudDeletePost(id).catch((e: Error) => setToast(`⚠ No se borró en la nube: ${e.message}`));
+      }
       setToast('Entrada eliminada');
     },
     [mutate],
@@ -527,6 +695,11 @@ export function AdminProvider({ children, onLocked }: { children: React.ReactNod
         ...s,
         requests: s.requests.map((r) => (r.id === id ? { ...r, status } : r)),
       }));
+      if (cloudConfigured && cloudUserRef.current) {
+        cloudUpdateRequestStatus(id, status).catch((e: Error) =>
+          setToast(`⚠ Estado sin sincronizar: ${e.message}`),
+        );
+      }
     },
     [mutate],
   );
@@ -591,6 +764,9 @@ export function AdminProvider({ children, onLocked }: { children: React.ReactNod
   const value: AdminState = {
     store,
     currentUser,
+    cloud,
+    cloudReady,
+    bootRestored,
     page,
     setPage,
     query,

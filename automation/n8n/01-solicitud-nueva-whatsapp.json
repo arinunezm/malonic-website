@@ -1,0 +1,55 @@
+{
+  "name": "Malonic · Solicitud nueva → WhatsApp",
+  "nodes": [
+    {
+      "name": "Webhook Supabase (INSERT requests)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "malonic-solicitud-nueva",
+        "responseMode": "onReceived"
+      }
+    },
+    {
+      "name": "Armar mensaje",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [220, 0],
+      "parameters": {
+        "jsCode": "// Payload de Supabase Database Webhook: { type: 'INSERT', record: {...} }\nconst r = $input.first().json.record ?? $input.first().json;\nif (!r || !r.name) return [];\nconst partes = [\n  `🎙 Nueva solicitud en malonicrecords`,\n  `${r.name} · ${r.email}`,\n  r.service ? `Servicio: ${r.service}` : null,\n  r.project ? `Proyecto: ${r.project}` : null,\n  r.message ? `“${String(r.message).slice(0, 180)}”` : null,\n  `Revisar: https://malonic-website.vercel.app/admin`,\n].filter(Boolean);\nreturn [{ json: { mensaje: partes.join('\\n') } }];"
+      }
+    },
+    {
+      "name": "WhatsApp a Nico",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [440, 0],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v25.0/{{ $env.MALONIC_WA_PHONE_ID }}/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{ $env.MALONIC_WA_TOKEN }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ messaging_product: 'whatsapp', to: $env.MALONIC_NICO_PHONE, type: 'template', template: { name: 'malonic_notificacion', language: { code: 'es_MX' }, components: [{ type: 'body', parameters: [{ type: 'text', text: $json.mensaje }] }] } }) }}"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook Supabase (INSERT requests)": {
+      "main": [[{ "node": "Armar mensaje", "type": "main", "index": 0 }]]
+    },
+    "Armar mensaje": {
+      "main": [[{ "node": "WhatsApp a Nico", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "active": false
+}

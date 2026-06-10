@@ -19,7 +19,7 @@
  *   comes from typography, the cursor and the reveal cadence — not from scroll inertia.
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { Suspense, lazy, useEffect, useState } from 'react';
 import { AnimatePresence } from 'motion/react';
 
 import { LangProvider } from './lib/i18n';
@@ -34,8 +34,12 @@ import { Services } from './sections/Services';
 import { Catalogue } from './sections/Catalogue';
 import { Booking } from './sections/Booking';
 import { Footer } from './sections/Footer';
-import { Admin } from './sections/Admin';
-import { BlogIndex, BlogPost } from './sections/Blog';
+
+// CRM y blog en chunks lazy: los visitantes del sitio no descargan el admin
+// (ni supabase-js cuando el modo nube esté activo).
+const Admin = lazy(() => import('./sections/Admin').then((m) => ({ default: m.Admin })));
+const BlogIndex = lazy(() => import('./sections/Blog').then((m) => ({ default: m.BlogIndex })));
+const BlogPost = lazy(() => import('./sections/Blog').then((m) => ({ default: m.BlogPost })));
 
 // Tiny pathname-based router. Avoids pulling in react-router for two shells.
 type Route = { kind: 'site' } | { kind: 'admin' } | { kind: 'blog' } | { kind: 'post'; slug: string };
@@ -71,7 +75,9 @@ export default function App() {
       <LangProvider>
         <Cursor />
         <Grain />
-        <Admin />
+        <Suspense fallback={<ShellFallback />}>
+          <Admin />
+        </Suspense>
       </LangProvider>
     );
   }
@@ -80,12 +86,19 @@ export default function App() {
       <LangProvider>
         <Cursor />
         <Grain />
-        {route.kind === 'blog' ? <BlogIndex /> : <BlogPost slug={route.slug} />}
+        <Suspense fallback={<ShellFallback />}>
+          {route.kind === 'blog' ? <BlogIndex /> : <BlogPost slug={route.slug} />}
+        </Suspense>
       </LangProvider>
     );
   }
 
   return <MarketingSite />;
+}
+
+/** Pantalla ink vacía mientras carga el chunk lazy (evita flash blanco). */
+function ShellFallback() {
+  return <div className="min-h-screen w-full" style={{ background: 'var(--color-ink)' }} aria-hidden />;
 }
 
 function MarketingSite() {

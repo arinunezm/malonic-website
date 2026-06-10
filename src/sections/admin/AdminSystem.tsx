@@ -2,10 +2,11 @@
  * Sistema: cuentas de acceso (usuarios + contraseñas) y datos & respaldo.
  */
 
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { motion } from 'motion/react';
 import { ease, dur } from '../../lib/motion';
 import { useAdmin } from './AdminContext';
+import { cloudFetchProfiles, type CloudProfile } from '../../lib/cloud';
 import {
   Avatar,
   CARD_STYLE,
@@ -38,14 +39,75 @@ import {
 } from '../../lib/admin-store';
 
 /* ─────────────────────────────────────────────────────────────────────────
+ * USUARIOS (modo nube) — lectura de profiles; altas/bajas en Supabase.
+ * ───────────────────────────────────────────────────────────────────────── */
+
+function CloudUsersPage() {
+  const { currentUser } = useAdmin();
+  const [profiles, setProfiles] = useState<CloudProfile[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    cloudFetchProfiles()
+      .then((p) => { if (alive) setProfiles(p); })
+      .catch((e: Error) => { if (alive) setError(e.message); });
+    return () => { alive = false; };
+  }, []);
+
+  return (
+    <motion.section initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: dur.md, ease: ease.outExpo }} className="max-w-[760px]">
+      <div className="rounded-[14px] p-6 mb-6" style={{ ...CARD_STYLE, border: '1px solid color-mix(in srgb, var(--color-signal) 14%, transparent)' }}>
+        <div className="flex items-center gap-2.5 mb-2">
+          <IconKey width={15} height={15} style={{ color: 'var(--color-signal)' }} />
+          <h3 className="font-display text-[1.05rem]" style={{ color: 'var(--color-paper)' }}>Accesos en la nube (Supabase Auth)</h3>
+        </div>
+        <p className="text-[0.85rem] max-w-[62ch]" style={{ color: 'var(--color-cloud)' }}>
+          Altas, bajas y contraseñas se administran en el dashboard de Supabase (Authentication → Users) y la tabla <code>profiles</code> (approved = acceso). Ver docs/FASE1_SUPABASE.md.
+        </p>
+      </div>
+
+      {error ? (
+        <p className="text-[0.85rem]" style={{ color: 'color-mix(in srgb, var(--color-brass) 85%, var(--color-paper))' }}>No se pudo cargar el equipo: {error}</p>
+      ) : profiles === null ? (
+        <div className="rounded-[14px] h-[64px] animate-pulse" style={{ background: 'color-mix(in srgb, var(--color-paper) 4%, transparent)' }} aria-hidden />
+      ) : (
+        <div className="flex flex-col gap-3">
+          {profiles.map((p) => (
+            <div key={p.id} className="rounded-[14px] px-5 py-4 flex items-center gap-4" style={CARD_STYLE}>
+              <Avatar name={p.name} accent={p.role === 'admin' ? 'signal' : 'pearl'} size={40} />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2.5">
+                  <span className="font-display text-[1rem] truncate" style={{ color: 'var(--color-paper)', letterSpacing: '-0.01em' }}>{p.name}</span>
+                  {p.id === currentUser?.id && (
+                    <span className="font-mono text-[8.5px] uppercase tracking-[0.14em] px-1.5 py-0.5 rounded-full" style={{ background: 'color-mix(in srgb, var(--color-signal) 14%, transparent)', color: 'var(--color-signal)' }}>
+                      Tú
+                    </span>
+                  )}
+                </div>
+                <div className="font-mono text-[10px] uppercase tracking-[0.14em] mt-0.5" style={{ color: 'var(--color-mist)' }}>
+                  {p.role === 'admin' ? 'Administrador' : 'Staff'} · alta {relativeTime(p.createdAt).toLowerCase()}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </motion.section>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
  * USUARIOS
  * ───────────────────────────────────────────────────────────────────────── */
 
 export function UsersPage() {
-  const { store, currentUser, addUser, resetPassword, deleteUser, notify } = useAdmin();
+  const { store, currentUser, addUser, resetPassword, deleteUser, notify, cloud } = useAdmin();
   const [adding, setAdding] = useState(false);
   const [resetting, setResetting] = useState<UserAccount | null>(null);
   const [confirmId, setConfirmId] = useState<string | null>(null);
+
+  if (cloud) return <CloudUsersPage />;
 
   return (
     <motion.section initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: dur.md, ease: ease.outExpo }}>
@@ -220,7 +282,7 @@ function ResetPasswordModal({ user, onClose, onSave }: { user: UserAccount | nul
  * ───────────────────────────────────────────────────────────────────────── */
 
 export function DataPage() {
-  const { store, replaceStore, notify, logout } = useAdmin();
+  const { store, replaceStore, notify, logout, cloud } = useAdmin();
   const fileRef = useRef<HTMLInputElement>(null);
   const [confirmReset, setConfirmReset] = useState(false);
 
@@ -312,23 +374,29 @@ export function DataPage() {
       <div className="rounded-[14px] p-6 mb-6" style={{ ...CARD_STYLE, border: '1px solid color-mix(in srgb, var(--color-signal) 14%, transparent)' }}>
         <div className="flex items-center gap-2.5 mb-2">
           <IconDatabase width={15} height={15} style={{ color: 'var(--color-signal)' }} />
-          <h3 className="font-display text-[1.05rem]" style={{ color: 'var(--color-paper)' }}>Fase 2 · Backend</h3>
+          <h3 className="font-display text-[1.05rem]" style={{ color: 'var(--color-paper)' }}>
+            {cloud ? 'Nube conectada · Supabase' : 'Fase 2 · Backend'}
+          </h3>
         </div>
         <p className="text-[0.85rem] max-w-[62ch]" style={{ color: 'var(--color-cloud)' }}>
-          Hoy las solicitudes del sitio y el blog público funcionan en este navegador. Al conectar la base de datos en la nube, las solicitudes de cualquier visitante llegarán aquí y el blog será visible para todo el mundo — sin cambiar tu forma de trabajar.
+          {cloud
+            ? 'Este CRM opera contra Supabase: las solicitudes de cualquier visitante llegan a la bandeja, el blog es público para todo el mundo y la operación se sincroniza entre dispositivos. La copia local funciona como caché.'
+            : 'Hoy las solicitudes del sitio y el blog público funcionan en este navegador. Al conectar la base de datos en la nube, las solicitudes de cualquier visitante llegarán aquí y el blog será visible para todo el mundo — sin cambiar tu forma de trabajar.'}
         </p>
       </div>
 
-      {/* Danger zone */}
-      <div className="rounded-[14px] p-6" style={{ ...CARD_STYLE, border: '1px solid color-mix(in srgb, var(--color-brass) 22%, transparent)' }}>
-        <h3 className="font-display text-[1.05rem] mb-2" style={{ color: 'color-mix(in srgb, var(--color-brass) 85%, var(--color-paper))' }}>Zona de riesgo</h3>
-        <p className="text-[0.85rem] mb-4 max-w-[60ch]" style={{ color: 'var(--color-cloud)' }}>
-          Borra todos los datos del CRM en este navegador (incluidas las cuentas de acceso). Descarga un respaldo antes.
-        </p>
-        <GhostButton onClick={() => setConfirmReset(true)}>
-          <IconTrash width={12} height={12} /> Borrar todos los datos
-        </GhostButton>
-      </div>
+      {/* Danger zone — solo en modo local (en nube borraría solo la caché y desincronizaría) */}
+      {!cloud && (
+        <div className="rounded-[14px] p-6" style={{ ...CARD_STYLE, border: '1px solid color-mix(in srgb, var(--color-brass) 22%, transparent)' }}>
+          <h3 className="font-display text-[1.05rem] mb-2" style={{ color: 'color-mix(in srgb, var(--color-brass) 85%, var(--color-paper))' }}>Zona de riesgo</h3>
+          <p className="text-[0.85rem] mb-4 max-w-[60ch]" style={{ color: 'var(--color-cloud)' }}>
+            Borra todos los datos del CRM en este navegador (incluidas las cuentas de acceso). Descarga un respaldo antes.
+          </p>
+          <GhostButton onClick={() => setConfirmReset(true)}>
+            <IconTrash width={12} height={12} /> Borrar todos los datos
+          </GhostButton>
+        </div>
+      )}
 
       <ConfirmDialog
         open={confirmReset}

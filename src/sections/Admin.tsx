@@ -47,10 +47,12 @@ const ACCESS_BG = '/img/studio-controlroom-purple.jpg';
 
 function AccessCard3D({
   mode,
+  cloud,
   onLogin,
   onSetup,
 }: {
   mode: 'login' | 'setup';
+  cloud: boolean;
   onLogin: (username: string, password: string) => Promise<boolean>;
   onSetup: (name: string, username: string, password: string) => Promise<void>;
 }) {
@@ -193,8 +195,8 @@ function AccessCard3D({
                 </div>
               )}
               <div className="field" style={fieldStyle}>
-                <label htmlFor="admin-user" style={{ color: 'var(--color-cloud)' }}>Usuario</label>
-                <input id="admin-user" type="text" autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} disabled={submitting} style={inputStyle} />
+                <label htmlFor="admin-user" style={{ color: 'var(--color-cloud)' }}>{cloud ? 'Correo electrónico' : 'Usuario'}</label>
+                <input id="admin-user" type={cloud ? 'email' : 'text'} autoComplete={cloud ? 'email' : 'username'} value={username} onChange={(e) => setUsername(e.target.value)} disabled={submitting} style={inputStyle} />
               </div>
               <div className="field" style={fieldStyle}>
                 <label htmlFor="admin-pass" style={{ color: 'var(--color-cloud)' }}>Contraseña</label>
@@ -295,10 +297,12 @@ function AccessCard3D({
 
 function AccessScreen({
   mode,
+  cloud,
   onLogin,
   onSetup,
 }: {
   mode: 'login' | 'setup';
+  cloud: boolean;
   onLogin: (u: string, p: string) => Promise<boolean>;
   onSetup: (n: string, u: string, p: string) => Promise<void>;
 }) {
@@ -317,7 +321,7 @@ function AccessScreen({
       </div>
 
       <div className="relative z-10 w-full container-x py-[9vh]">
-        <AccessCard3D mode={mode} onLogin={onLogin} onSetup={onSetup} />
+        <AccessCard3D mode={mode} cloud={cloud} onLogin={onLogin} onSetup={onSetup} />
       </div>
     </section>
   );
@@ -695,25 +699,13 @@ function AdminShell() {
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
- * Entry — gates: setup (sin usuarios) → login → shell
+ * Entry — gates: (cloud: login Supabase) · (local: setup → login) → shell
  * ───────────────────────────────────────────────────────────────────────── */
 
-// On a fresh page load with a live session (refresh), skip the card entirely.
-let restoredAtBoot: string | null | undefined;
-function sessionRestored(userId: string): boolean {
-  if (restoredAtBoot === undefined) {
-    try {
-      restoredAtBoot = window.sessionStorage.getItem('malonic-admin-session');
-    } catch {
-      restoredAtBoot = null;
-    }
-  }
-  return restoredAtBoot === userId;
-}
-
 function AdminGate() {
-  const { currentUser, store, login, setupAdmin } = useAdmin();
-  const mode: 'login' | 'setup' = store.users.length === 0 ? 'setup' : 'login';
+  const { currentUser, store, login, setupAdmin, cloud, cloudReady, bootRestored } = useAdmin();
+  // En modo nube los accesos viven en Supabase: nunca hay setup local.
+  const mode: 'login' | 'setup' = !cloud && store.users.length === 0 ? 'setup' : 'login';
   const [entered, setEntered] = useState(false);
 
   // El flip de la card dura ~1.5s antes de entrar al shell.
@@ -727,7 +719,12 @@ function AdminGate() {
     window.setTimeout(() => setEntered(true), 1500);
   };
 
-  const showShell = currentUser !== null && (entered || sessionRestored(currentUser.id));
+  // Mientras se restaura la sesión cloud, pantalla ink (sin parpadear la card).
+  if (!cloudReady) {
+    return <div className="min-h-screen w-full" style={{ background: 'var(--color-ink)' }} aria-hidden />;
+  }
+
+  const showShell = currentUser !== null && (entered || bootRestored);
 
   // Conditional render (no AnimatePresence here): swapping two full-screen
   // trees via exit animations proved fragile — the card's live motion values
@@ -738,7 +735,7 @@ function AdminGate() {
     </motion.div>
   ) : (
     <motion.div key="access" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: dur.sm, ease: ease.outExpo }}>
-      <AccessScreen mode={mode} onLogin={handleLogin} onSetup={handleSetup} />
+      <AccessScreen mode={mode} cloud={cloud} onLogin={handleLogin} onSetup={handleSetup} />
     </motion.div>
   );
 }
@@ -753,12 +750,7 @@ export function Admin() {
   }, []);
 
   return (
-    <AdminProvider
-      onLocked={() => {
-        restoredAtBoot = null;
-        setLockTick((t) => t + 1);
-      }}
-    >
+    <AdminProvider onLocked={() => setLockTick((t) => t + 1)}>
       <AdminGate />
     </AdminProvider>
   );

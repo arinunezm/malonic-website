@@ -5,11 +5,12 @@
  * publicó; el layout y la ruta ya están listos para la fase API.
  */
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
 import { ease, dur } from '../lib/motion';
 import { Wordmark } from '../components/Nav';
 import { getPublishedPosts, findPostBySlug, formatDateLongMX, onStoreChanged, type BlogPost } from '../lib/admin-store';
+import { cloudConfigured } from '../lib/cloud-env';
 
 function BlogChrome({ children }: { children: React.ReactNode }) {
   useEffect(() => {
@@ -46,12 +47,33 @@ function PostCoverFrame({ post, tall }: { post: BlogPost; tall?: boolean }) {
 }
 
 export function BlogIndex() {
-  const [posts, setPosts] = useState<BlogPost[]>(() => getPublishedPosts());
+  const [posts, setPosts] = useState<BlogPost[]>(() => (cloudConfigured ? [] : getPublishedPosts()));
+  const [loading, setLoading] = useState(cloudConfigured);
 
   useEffect(() => {
     document.title = 'Journal · Malonic Records';
-    return onStoreChanged(() => setPosts(getPublishedPosts()));
+    if (!cloudConfigured) {
+      return onStoreChanged(() => setPosts(getPublishedPosts()));
+    }
+    let alive = true;
+    import('../lib/cloud')
+      .then(({ cloudFetchPublishedPosts }) => cloudFetchPublishedPosts())
+      .then((p) => { if (alive) setPosts(p); })
+      .catch(() => { if (alive) setPosts(getPublishedPosts()); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
   }, []);
+
+  if (loading) {
+    return (
+      <BlogChrome>
+        <div className="pt-10 md:pt-16 animate-pulse" aria-hidden>
+          <div className="h-4 w-40 rounded-full mb-6" style={{ background: 'color-mix(in srgb, var(--color-paper) 6%, transparent)' }} />
+          <div className="h-14 w-[min(640px,90%)] rounded-[10px]" style={{ background: 'color-mix(in srgb, var(--color-paper) 5%, transparent)' }} />
+        </div>
+      </BlogChrome>
+    );
+  }
 
   return (
     <BlogChrome>
@@ -113,11 +135,36 @@ export function BlogIndex() {
 }
 
 export function BlogPost({ slug }: { slug: string }) {
-  const post = useMemo(() => findPostBySlug(slug), [slug]);
+  const [post, setPost] = useState<BlogPost | null | undefined>(() =>
+    cloudConfigured ? undefined : findPostBySlug(slug) ?? null,
+  );
+
+  useEffect(() => {
+    if (!cloudConfigured) return;
+    let alive = true;
+    import('../lib/cloud')
+      .then(({ cloudFetchPostBySlug }) => cloudFetchPostBySlug(slug))
+      .then((p) => { if (alive) setPost(p ?? findPostBySlug(slug) ?? null); })
+      .catch(() => { if (alive) setPost(findPostBySlug(slug) ?? null); });
+    return () => { alive = false; };
+  }, [slug]);
 
   useEffect(() => {
     document.title = post ? `${post.title} · Malonic Records` : 'Journal · Malonic Records';
   }, [post]);
+
+  // undefined = cargando desde la nube
+  if (post === undefined) {
+    return (
+      <BlogChrome>
+        <div className="max-w-[760px] mx-auto pt-6 md:pt-12 animate-pulse" aria-hidden>
+          <div className="h-4 w-24 rounded-full mb-8" style={{ background: 'color-mix(in srgb, var(--color-paper) 6%, transparent)' }} />
+          <div className="h-12 w-[85%] rounded-[10px] mb-4" style={{ background: 'color-mix(in srgb, var(--color-paper) 5%, transparent)' }} />
+          <div className="h-[260px] w-full rounded-[14px]" style={{ background: 'color-mix(in srgb, var(--color-paper) 4%, transparent)' }} />
+        </div>
+      </BlogChrome>
+    );
+  }
 
   if (!post) {
     return (

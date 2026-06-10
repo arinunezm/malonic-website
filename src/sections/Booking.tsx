@@ -4,6 +4,7 @@ import { useLang, content } from '../lib/i18n';
 import { ease, dur } from '../lib/motion';
 import { useSectionTheme, Label, MagneticButton } from '../components/primitives';
 import { submitWebRequest } from '../lib/admin-store';
+import { cloudConfigured } from '../lib/cloud-env';
 
 export function Booking() {
   const ref = useSectionTheme<HTMLElement>('paper');
@@ -23,17 +24,33 @@ export function Booking() {
     (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
       setForm((s) => ({ ...s, [k]: e.target.value }));
 
-  const onSubmit = (e: React.FormEvent) => {
+  const [sending, setSending] = useState(false);
+
+  const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    // Feed the CRM inbox (/admin → Solicitudes). Local-first for now: the
-    // request is visible in this browser; the backend phase will sync it.
-    submitWebRequest({
+    if (sending) return;
+    setSending(true);
+    // Feed the CRM inbox (/admin → Solicitudes). En modo nube el INSERT va a
+    // Supabase (cualquier visitante); si falla o no está configurado, cae al
+    // store local para no perder nunca la solicitud ni romper la UX.
+    const payload = {
       name: form.name,
       email: form.email,
       project: form.project,
       service: form.service,
       message: form.message,
-    });
+    };
+    if (cloudConfigured) {
+      try {
+        const { cloudSubmitRequest } = await import('../lib/cloud');
+        await cloudSubmitRequest(payload);
+      } catch {
+        submitWebRequest(payload);
+      }
+    } else {
+      submitWebRequest(payload);
+    }
+    setSending(false);
     setSubmitted(true);
   };
 

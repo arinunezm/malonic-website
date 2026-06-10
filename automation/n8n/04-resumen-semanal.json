@@ -1,0 +1,67 @@
+{
+  "name": "Malonic · Resumen semanal (viernes)",
+  "nodes": [
+    {
+      "name": "Viernes 18:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0],
+      "parameters": {
+        "rule": { "interval": [{ "field": "cronExpression", "expression": "0 18 * * 5" }] }
+      }
+    },
+    {
+      "name": "Leer documento CRM",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [220, 0],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.MALONIC_SUPABASE_URL }}/rest/v1/documents?key=eq.malonic-crm&select=data",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey", "value": "={{ $env.MALONIC_SUPABASE_SERVICE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.MALONIC_SUPABASE_SERVICE_KEY }}" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Calcular semana",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 0],
+      "parameters": {
+        "jsCode": "const rows = $input.first().json;\nconst doc = Array.isArray(rows) ? rows[0]?.data : rows?.data;\nif (!doc) return [];\nconst tz = 'America/Monterrey';\nconst hoyKey = new Date().toLocaleDateString('sv-SE', { timeZone: tz });\nconst hace7 = new Date(Date.now() - 7 * 24 * 3600 * 1000).toLocaleDateString('sv-SE', { timeZone: tz });\nconst semana = (doc.bookings ?? []).filter(b => b.date >= hace7 && b.date <= hoyKey && b.status !== 'cancelled');\nconst fmt = n => new Intl.NumberFormat('es-MX').format(n);\nconst facturado = semana.filter(b => b.status === 'confirmed' || b.status === 'completed').reduce((a, b) => a + b.amount, 0);\nconst horas = semana.reduce((a, b) => a + b.duration, 0);\nconst completadas = semana.filter(b => b.status === 'completed').length;\nconst pendientes = (doc.bookings ?? []).filter(b => b.status === 'pending').length;\nconst balance = b => (b.status === 'cancelled' || b.paymentStatus === 'paid') ? 0 : (b.amount - b.deposit);\nconst porCobrar = (doc.bookings ?? []).filter(b => (b.status === 'confirmed' || b.status === 'completed')).reduce((a, b) => a + balance(b), 0);\nconst mensaje = [\n  `📊 Semana Malonic (${hace7} → ${hoyKey})`,\n  `Sesiones: ${semana.length} (${completadas} completadas) · ${horas}h`,\n  `Facturación: $${fmt(facturado)} MXN`,\n  `Por cobrar total: $${fmt(porCobrar)} MXN`,\n  pendientes > 0 ? `⏳ ${pendientes} reserva(s) sin depósito` : '✅ Sin pendientes de depósito',\n  `Detalle: https://malonic-website.vercel.app/admin → Analítica`,\n].join('\\n');\nreturn [{ json: { mensaje } }];"
+      }
+    },
+    {
+      "name": "WhatsApp a Nico",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 0],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v25.0/{{ $env.MALONIC_WA_PHONE_ID }}/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{ $env.MALONIC_WA_TOKEN }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ messaging_product: 'whatsapp', to: $env.MALONIC_NICO_PHONE, type: 'template', template: { name: 'malonic_notificacion', language: { code: 'es_MX' }, components: [{ type: 'body', parameters: [{ type: 'text', text: $json.mensaje }] }] } }) }}"
+      }
+    }
+  ],
+  "connections": {
+    "Viernes 18:00": { "main": [[{ "node": "Leer documento CRM", "type": "main", "index": 0 }]] },
+    "Leer documento CRM": { "main": [[{ "node": "Calcular semana", "type": "main", "index": 0 }]] },
+    "Calcular semana": { "main": [[{ "node": "WhatsApp a Nico", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "active": false
+}
