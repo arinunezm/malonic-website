@@ -282,9 +282,12 @@ function ResetPasswordModal({ user, onClose, onSave }: { user: UserAccount | nul
  * ───────────────────────────────────────────────────────────────────────── */
 
 export function DataPage() {
-  const { store, replaceStore, notify, logout, cloud } = useAdmin();
+  const { store, replaceStore, notify, logout, cloud, saveSettings } = useAdmin();
   const fileRef = useRef<HTMLInputElement>(null);
   const [confirmReset, setConfirmReset] = useState(false);
+  const [phone, setPhone] = useState(store.settings.notifyPhone ?? '');
+  const phoneClean = phone.replace(/[^\d]/g, '');
+  const phoneValid = phoneClean.length === 0 || (phoneClean.length >= 11 && phoneClean.length <= 15);
 
   const used = storeSizeBytes();
   const pct = Math.min(100, Math.round((used / STORAGE_BUDGET_BYTES) * 100));
@@ -342,6 +345,42 @@ export function DataPage() {
             </div>
           ))}
         </div>
+      </div>
+
+      {/* Notificaciones WhatsApp */}
+      <div className="rounded-[14px] p-6 mb-6" style={CARD_STYLE}>
+        <h3 className="font-display text-[1.05rem] mb-2" style={{ color: 'var(--color-paper)' }}>Notificaciones WhatsApp</h3>
+        <p className="text-[0.85rem] mb-5 max-w-[60ch]" style={{ color: 'var(--color-cloud)' }}>
+          Número que recibe los avisos automáticos (solicitud nueva, sesiones de mañana, cobranza, resumen semanal). Formato internacional sin «+», ej. <span className="font-mono">528112345678</span>. Puedes cambiarlo aquí cuando quieras.
+        </p>
+        <div className="flex flex-wrap items-end gap-4 max-w-[480px]">
+          <div className="flex-1 min-w-[220px]">
+            <Field label="WhatsApp para avisos" htmlFor="set-phone" active hint={!phoneValid ? 'Entre 11 y 15 dígitos (incluye lada de país, 52…)' : undefined}>
+              <input
+                id="set-phone"
+                type="tel"
+                inputMode="numeric"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                placeholder="52XXXXXXXXXX"
+                autoComplete="off"
+                style={fieldInputStyle}
+              />
+            </Field>
+          </div>
+          <SignalButton
+            small
+            disabled={!phoneValid || phoneClean === (store.settings.notifyPhone ?? '')}
+            onClick={() => saveSettings({ notifyPhone: phoneClean || undefined })}
+          >
+            Guardar
+          </SignalButton>
+        </div>
+        {store.settings.notifyPhone && (
+          <p className="mt-3 font-mono text-[9px] uppercase tracking-[0.16em]" style={{ color: 'var(--color-signal)' }}>
+            Activo: +{store.settings.notifyPhone}
+          </p>
+        )}
       </div>
 
       {/* Backup */}

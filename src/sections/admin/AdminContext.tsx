@@ -29,6 +29,7 @@ import {
   type UserAccount,
   type WebRequest,
   type RequestStatus,
+  type CrmSettings,
 } from '../../lib/admin-store';
 import { cloudConfigured } from '../../lib/cloud-env';
 import {
@@ -140,6 +141,9 @@ type AdminState = {
 
   // requests
   setRequestStatus: (id: string, status: RequestStatus) => void;
+
+  // settings
+  saveSettings: (patch: CrmSettings) => void;
 
   // users
   addUser: (name: string, username: string, password: string, role: Role) => Promise<{ ok: boolean; error?: string }>;
@@ -704,6 +708,16 @@ export function AdminProvider({ children, onLocked }: { children: React.ReactNod
     [mutate],
   );
 
+  /* ── settings ─────────────────────────────────────────────────────── */
+
+  const saveSettings = useCallback<AdminState['saveSettings']>(
+    (patch) => {
+      mutate((s) => ({ ...s, settings: { ...s.settings, ...patch } }));
+      setToast('Ajustes guardados');
+    },
+    [mutate],
+  );
+
   /* ── users ────────────────────────────────────────────────────────── */
 
   const addUser = useCallback<AdminState['addUser']>(
@@ -793,6 +807,7 @@ export function AdminProvider({ children, onLocked }: { children: React.ReactNod
     setPostStatus,
     deletePost,
     setRequestStatus,
+    saveSettings,
     addUser,
     resetPassword,
     deleteUser,

@@ -18,6 +18,7 @@ import {
   type BlogPost,
   type Booking,
   type Client,
+  type CrmSettings,
   type RequestStatus,
   type Role,
   type Service,
@@ -276,6 +277,7 @@ export type OperationalDoc = {
   services: Service[];
   bookings: Booking[];
   activities: Activity[];
+  settings: CrmSettings;
 };
 
 export const operationalOf = (s: StoreData): OperationalDoc => ({
@@ -283,6 +285,7 @@ export const operationalOf = (s: StoreData): OperationalDoc => ({
   services: s.services,
   bookings: s.bookings,
   activities: s.activities,
+  settings: s.settings,
 });
 
 export async function cloudPullDocument(): Promise<{ doc: OperationalDoc; updatedAt: string } | null> {
@@ -296,6 +299,7 @@ export async function cloudPullDocument(): Promise<{ doc: OperationalDoc; update
       services: Array.isArray(d.services) ? d.services : [],
       bookings: Array.isArray(d.bookings) ? d.bookings : [],
       activities: Array.isArray(d.activities) ? d.activities : [],
+      settings: d.settings && typeof d.settings === 'object' ? d.settings : {},
     },
     updatedAt: data.updated_at as string,
   };

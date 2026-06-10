@@ -157,6 +157,12 @@ export type Activity = {
   tone: AvatarAccent;
 };
 
+/** Ajustes editables desde el portal (los lee también n8n vía doc-sync). */
+export type CrmSettings = {
+  /** WhatsApp E.164 sin '+' (ej. 528112345678) al que avisan los workflows. */
+  notifyPhone?: string;
+};
+
 export type StoreData = {
   version: 1;
   users: UserAccount[];
@@ -166,6 +172,7 @@ export type StoreData = {
   posts: BlogPost[];
   requests: WebRequest[];
   activities: Activity[];
+  settings: CrmSettings;
 };
 
 export const EMPTY_STORE: StoreData = {
@@ -177,6 +184,7 @@ export const EMPTY_STORE: StoreData = {
   posts: [],
   requests: [],
   activities: [],
+  settings: {},
 };
 
 /* ─────────────────────────────────────────────────────────────────────────
@@ -209,6 +217,7 @@ export function normalizeStore(raw: unknown): StoreData {
     posts: asArray<BlogPost>(r.posts),
     requests: asArray<WebRequest>(r.requests),
     activities: asArray<Activity>(r.activities),
+    settings: r.settings && typeof r.settings === 'object' ? (r.settings as CrmSettings) : {},
   };
 }
 

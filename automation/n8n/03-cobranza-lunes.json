@@ -5,24 +5,43 @@
       "name": "Lunes 9:00",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
-      "position": [0, 0],
+      "position": [
+        0,
+        0
+      ],
       "parameters": {
-        "rule": { "interval": [{ "field": "cronExpression", "expression": "0 9 * * 1" }] }
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * 1"
+            }
+          ]
+        }
       }
     },
     {
       "name": "Leer documento CRM",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [220, 0],
+      "position": [
+        220,
+        0
+      ],
       "parameters": {
         "method": "GET",
         "url": "={{ $env.MALONIC_SUPABASE_URL }}/rest/v1/documents?key=eq.malonic-crm&select=data",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "apikey", "value": "={{ $env.MALONIC_SUPABASE_SERVICE_KEY }}" },
-            { "name": "Authorization", "value": "=Bearer {{ $env.MALONIC_SUPABASE_SERVICE_KEY }}" }
+            {
+              "name": "apikey",
+              "value": "={{ $env.MALONIC_SUPABASE_SERVICE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.MALONIC_SUPABASE_SERVICE_KEY }}"
+            }
           ]
         }
       }
@@ -31,37 +50,81 @@
       "name": "Cuentas por cobrar",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [440, 0],
+      "position": [
+        440,
+        0
+      ],
       "parameters": {
-        "jsCode": "const rows = $input.first().json;\nconst doc = Array.isArray(rows) ? rows[0]?.data : rows?.data;\nif (!doc) return [];\nconst balance = b => (b.status === 'cancelled' || b.paymentStatus === 'paid') ? 0 : (b.amount - b.deposit);\nconst abiertas = (doc.bookings ?? [])\n  .filter(b => (b.status === 'confirmed' || b.status === 'completed') && balance(b) > 0)\n  .sort((a, b) => Number(b.paymentStatus === 'overdue') - Number(a.paymentStatus === 'overdue'));\nif (abiertas.length === 0) return [];\nconst fmt = n => new Intl.NumberFormat('es-MX').format(n);\nconst total = abiertas.reduce((acc, b) => acc + balance(b), 0);\nconst lineas = abiertas.slice(0, 8).map(b => `· ${b.clientName}: $${fmt(balance(b))}${b.paymentStatus === 'overdue' ? ' ⚠ VENCIDO' : ''} (${b.serviceName})`);\nconst mensaje = [`💰 Cobranza Malonic — $${fmt(total)} MXN abiertos:`, ...lineas, abiertas.length > 8 ? `…y ${abiertas.length - 8} más` : null].filter(Boolean).join('\\n');\nreturn [{ json: { mensaje } }];"
+        "jsCode": "const rows = $input.first().json;\nconst doc = Array.isArray(rows) ? rows[0]?.data : rows?.data;\nif (!doc) return [];\nconst telefono = (doc.settings && doc.settings.notifyPhone) || $env.MALONIC_NICO_PHONE;\nif (!telefono) return [];\nconst balance = b => (b.status === 'cancelled' || b.paymentStatus === 'paid') ? 0 : (b.amount - b.deposit);\nconst abiertas = (doc.bookings ?? [])\n  .filter(b => (b.status === 'confirmed' || b.status === 'completed') && balance(b) > 0)\n  .sort((a, b) => Number(b.paymentStatus === 'overdue') - Number(a.paymentStatus === 'overdue'));\nif (abiertas.length === 0) return [];\nconst fmt = n => new Intl.NumberFormat('es-MX').format(n);\nconst total = abiertas.reduce((acc, b) => acc + balance(b), 0);\nconst lineas = abiertas.slice(0, 8).map(b => `· ${b.clientName}: $${fmt(balance(b))}${b.paymentStatus === 'overdue' ? ' ⚠ VENCIDO' : ''} (${b.serviceName})`);\nconst mensaje = [`💰 Cobranza Malonic — $${fmt(total)} MXN abiertos:`, ...lineas, abiertas.length > 8 ? `…y ${abiertas.length - 8} más` : null].filter(Boolean).join('\\n');\nreturn [{ json: { mensaje, telefono } }];"
       }
     },
     {
       "name": "WhatsApp a Nico",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [660, 0],
+      "position": [
+        660,
+        0
+      ],
       "parameters": {
         "method": "POST",
         "url": "=https://graph.facebook.com/v25.0/{{ $env.MALONIC_WA_PHONE_ID }}/messages",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "Authorization", "value": "=Bearer {{ $env.MALONIC_WA_TOKEN }}" },
-            { "name": "Content-Type", "value": "application/json" }
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.MALONIC_WA_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
           ]
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ messaging_product: 'whatsapp', to: $env.MALONIC_NICO_PHONE, type: 'template', template: { name: 'malonic_notificacion', language: { code: 'es_MX' }, components: [{ type: 'body', parameters: [{ type: 'text', text: $json.mensaje }] }] } }) }}"
+        "jsonBody": "={{ JSON.stringify({ messaging_product: 'whatsapp', to: $json.telefono, type: 'template', template: { name: 'malonic_notificacion', language: { code: 'es_MX' }, components: [{ type: 'body', parameters: [{ type: 'text', text: $json.mensaje }] }] } }) }}"
       }
     }
   ],
   "connections": {
-    "Lunes 9:00": { "main": [[{ "node": "Leer documento CRM", "type": "main", "index": 0 }]] },
-    "Leer documento CRM": { "main": [[{ "node": "Cuentas por cobrar", "type": "main", "index": 0 }]] },
-    "Cuentas por cobrar": { "main": [[{ "node": "WhatsApp a Nico", "type": "main", "index": 0 }]] }
+    "Lunes 9:00": {
+      "main": [
+        [
+          {
+            "node": "Leer documento CRM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leer documento CRM": {
+      "main": [
+        [
+          {
+            "node": "Cuentas por cobrar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cuentas por cobrar": {
+      "main": [
+        [
+          {
+            "node": "WhatsApp a Nico",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
   },
-  "settings": { "executionOrder": "v1" },
+  "settings": {
+    "executionOrder": "v1"
+  },
   "active": false
 }
