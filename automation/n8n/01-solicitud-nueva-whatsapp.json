@@ -1,80 +1,82 @@
 {
+  "id": "zr9Ttt9bJ7qgpMnl",
   "name": "Malonic · Solicitud nueva → WhatsApp",
   "nodes": [
     {
-      "name": "Webhook Supabase (INSERT requests)",
-      "type": "n8n-nodes-base.webhook",
-      "typeVersion": 2,
-      "position": [
-        0,
-        0
-      ],
+      "name": "Cada minuto",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0],
       "parameters": {
-        "httpMethod": "POST",
-        "path": "malonic-solicitud-nueva",
-        "responseMode": "onReceived"
+        "rule": { "interval": [{ "field": "cronExpression", "expression": "* * * * *" }] }
+      }
+    },
+    {
+      "name": "Marca de tiempo",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [200, 0],
+      "parameters": {
+        "jsCode": "// Recuerda hasta qué created_at ya avisamos (persistente entre ejecuciones).\nconst sd = $getWorkflowStaticData('global');\nconst lastAt = sd.lastAt || new Date(Date.now() - 5 * 60 * 1000).toISOString();\nreturn [{ json: { lastAt } }];"
+      }
+    },
+    {
+      "name": "Solicitudes nuevas",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [400, 0],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.MALONIC_SUPABASE_URL }}/rest/v1/requests?status=eq.new&created_at=gt.{{ encodeURIComponent($('Marca de tiempo').first().json.lastAt) }}&order=created_at.asc&select=*",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey", "value": "={{ $env.MALONIC_SUPABASE_SERVICE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.MALONIC_SUPABASE_SERVICE_KEY }}" }
+          ]
+        }
       }
     },
     {
       "name": "Leer documento CRM",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        200,
-        160
-      ],
+      "position": [600, 0],
       "parameters": {
         "method": "GET",
         "url": "={{ $env.MALONIC_SUPABASE_URL }}/rest/v1/documents?key=eq.malonic-crm&select=data",
         "sendHeaders": true,
+        "options": { "response": { "response": { "neverError": true } } },
         "headerParameters": {
           "parameters": [
-            {
-              "name": "apikey",
-              "value": "={{ $env.MALONIC_SUPABASE_SERVICE_KEY }}"
-            },
-            {
-              "name": "Authorization",
-              "value": "=Bearer {{ $env.MALONIC_SUPABASE_SERVICE_KEY }}"
-            }
+            { "name": "apikey", "value": "={{ $env.MALONIC_SUPABASE_SERVICE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.MALONIC_SUPABASE_SERVICE_KEY }}" }
           ]
         }
       }
     },
     {
-      "name": "Armar mensaje",
+      "name": "Armar mensajes",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        220,
-        0
-      ],
+      "position": [800, 0],
       "parameters": {
-        "jsCode": "// Solicitud del webhook + teléfono configurable desde el portal.\nconst hook = $('Webhook Supabase (INSERT requests)').first().json;\nconst r = hook.record ?? hook;\nif (!r || !r.name) return [];\nconst rows = $input.first().json;\nconst doc = Array.isArray(rows) ? rows[0]?.data : rows?.data;\nconst telefono = (doc && doc.settings && doc.settings.notifyPhone) || $env.MALONIC_NICO_PHONE;\nif (!telefono) return [];\nconst partes = [\n  `🎙 Nueva solicitud en malonicrecords`,\n  `${r.name} · ${r.email}`,\n  r.service ? `Servicio: ${r.service}` : null,\n  r.project ? `Proyecto: ${r.project}` : null,\n  r.message ? `“${String(r.message).slice(0, 180)}”` : null,\n  `Revisar: https://malonic-website.vercel.app/admin`,\n].filter(Boolean);\nreturn [{ json: { mensaje: partes.join('\\n'), telefono } }];"
+        "jsCode": "// Solicitudes nuevas + teléfono del documento (configurable en /admin → Datos).\nconst nuevas = $('Solicitudes nuevas').all().map(i => i.json).filter(r => r && r.id && r.name);\nif (nuevas.length === 0) return [];\nconst docRows = $('Leer documento CRM').first().json;\nconst rows = Array.isArray(docRows) ? docRows : (docRows && docRows.body) || [];\nconst doc = Array.isArray(rows) ? (rows[0] && rows[0].data) : undefined;\nconst telefono = (doc && doc.settings && doc.settings.notifyPhone) || $env.MALONIC_NICO_PHONE;\nif (!telefono) return [];\n// Avanzar la marca al created_at más reciente avisado (evita duplicados).\nconst sd = $getWorkflowStaticData('global');\nconst maxAt = nuevas.map(r => r.created_at).sort().at(-1);\nif (maxAt) sd.lastAt = maxAt;\nreturn nuevas.map(r => {\n  const partes = [\n    `🎙 Nueva solicitud en malonicrecords`,\n    `${r.name} · ${r.email}`,\n    r.service ? `Servicio: ${r.service}` : null,\n    r.project ? `Proyecto: ${r.project}` : null,\n    r.message ? `“${String(r.message).slice(0, 180)}”` : null,\n    `Revisar: https://malonic-website.vercel.app/admin`,\n  ].filter(Boolean);\n  return { json: { mensaje: partes.join('\\n'), telefono } };\n});"
       }
     },
     {
       "name": "WhatsApp a Nico",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        440,
-        0
-      ],
+      "position": [1000, 0],
       "parameters": {
         "method": "POST",
         "url": "=https://graph.facebook.com/v25.0/{{ $env.MALONIC_WA_PHONE_ID }}/messages",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            {
-              "name": "Authorization",
-              "value": "=Bearer {{ $env.MALONIC_WA_TOKEN }}"
-            },
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            }
+            { "name": "Authorization", "value": "=Bearer {{ $env.MALONIC_WA_TOKEN }}" },
+            { "name": "Content-Type", "value": "application/json" }
           ]
         },
         "sendBody": true,
@@ -84,42 +86,12 @@
     }
   ],
   "connections": {
-    "Webhook Supabase (INSERT requests)": {
-      "main": [
-        [
-          {
-            "node": "Leer documento CRM",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Leer documento CRM": {
-      "main": [
-        [
-          {
-            "node": "Armar mensaje",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Armar mensaje": {
-      "main": [
-        [
-          {
-            "node": "WhatsApp a Nico",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    }
+    "Cada minuto": { "main": [[{ "node": "Marca de tiempo", "type": "main", "index": 0 }]] },
+    "Marca de tiempo": { "main": [[{ "node": "Solicitudes nuevas", "type": "main", "index": 0 }]] },
+    "Solicitudes nuevas": { "main": [[{ "node": "Leer documento CRM", "type": "main", "index": 0 }]] },
+    "Leer documento CRM": { "main": [[{ "node": "Armar mensajes", "type": "main", "index": 0 }]] },
+    "Armar mensajes": { "main": [[{ "node": "WhatsApp a Nico", "type": "main", "index": 0 }]] }
   },
-  "settings": {
-    "executionOrder": "v1"
-  },
+  "settings": { "executionOrder": "v1" },
   "active": false
 }

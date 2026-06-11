@@ -5,9 +5,22 @@ Supabase (fase 1 activa) y notifican a Nico por WhatsApp usando la Meta Cloud
 API que NeMo ya tiene aprobada. **Requisito: Fase 1 activada**
 (docs/FASE1_SUPABASE.md).
 
-> Nota de esta sesión: el acceso SSH al VPS me fue bloqueado por permisos
-> (correcto para un target de producción compartido), así que los workflows
-> quedan como archivos importables — la instalación son ~15 min manuales.
+> **ESTADO 2026-06-11: DESPLEGADO en el VPS.** Los 4 workflows ya están
+> importados y ACTIVOS en el n8n del Hetzner (62.238.7.70). Credenciales en
+> `/opt/nemo/malonic.env`, reutilizando el token+phone_id de WhatsApp de NeMo
+> Pulse (mismo WABA). Esta guía queda como referencia/runbook. Notas de
+> despliegue real abajo (§6).
+>
+> Gotchas de n8n 2.15.1 que encontramos:
+> - Los **webhooks no se registran al activar por CLI** (modelo draft/published
+>   de n8n 2.x). Por eso el workflow 01 se convirtió de webhook a **polling**
+>   (cron cada minuto que consulta Supabase por solicitudes nuevas, con
+>   `staticData.lastAt` para no duplicar). Sin dependencia de webhook ni de
+>   configurar Database Webhook en Supabase.
+> - **`$env` está bloqueado en expresiones por defecto**: hay que poner
+>   `N8N_BLOCK_ENV_ACCESS_IN_NODE=false` en el environment del compose.
+> - Activar un workflow en 2.x: `docker exec n8n n8n publish:workflow --id=X`
+>   y reiniciar (`update:workflow --active` está deprecado).
 
 ## 1 · Variables de entorno en n8n (una vez)
 
