@@ -18,6 +18,9 @@ coverage/
 .env.*
 !.env.example
 
+# supabase cli cache
+supabase/.temp/
+
 # vercel
 .vercel/
 

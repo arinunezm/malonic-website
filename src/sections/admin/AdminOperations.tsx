@@ -57,7 +57,7 @@ const matches = (q: string, ...fields: (string | undefined)[]) =>
  * ───────────────────────────────────────────────────────────────────────── */
 
 export function RequestsPage() {
-  const { store, setRequestStatus, openBookingModal, query } = useAdmin();
+  const { store, setRequestStatus, openBookingModal, query, cloud } = useAdmin();
   const [tab, setTab] = useState<'open' | 'all'>('open');
   const q = query.trim().toLowerCase();
 
@@ -71,7 +71,11 @@ export function RequestsPage() {
       <EmptyState
         Icon={IconInbox}
         title="Sin solicitudes todavía"
-        body="Cuando alguien envíe el formulario de reservas del sitio web (en este navegador), aparecerá aquí para darle seguimiento y convertirla en reservación."
+        body={
+          cloud
+            ? 'Cuando un visitante envíe el formulario de reservas del sitio web, su solicitud llegará aquí en automático para darle seguimiento y convertirla en reservación.'
+            : 'Cuando alguien envíe el formulario de reservas del sitio web (en este navegador), aparecerá aquí para darle seguimiento y convertirla en reservación.'
+        }
       />
     );
   }
