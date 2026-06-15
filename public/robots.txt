@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://malonicrecords.com/sitemap.xml
+Sitemap: https://www.malonicrecords.com/sitemap.xml
