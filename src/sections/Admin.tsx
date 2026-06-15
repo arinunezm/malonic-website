@@ -403,7 +403,7 @@ function AdminSidebar() {
           <SidebarButton key={item.id} item={item} active={page === item.id} badge={badges[item.id]} onClick={() => setPage(item.id)} />
         ))}
         <div className="px-6 pt-6 pb-2 font-mono text-[10px] uppercase tracking-[0.22em]" style={{ color: 'var(--color-mist)' }}>Configuración</div>
-        {CONFIG_NAV.map((item) => (
+        {CONFIG_NAV.filter((item) => item.id !== 'users' || currentUser?.role === 'admin').map((item) => (
           <SidebarButton key={item.id} item={item} active={page === item.id} onClick={() => setPage(item.id)} />
         ))}
       </nav>
@@ -488,7 +488,7 @@ function Topbar() {
 }
 
 function MobileNav() {
-  const { page, setPage, logout, store } = useAdmin();
+  const { page, setPage, logout, store, currentUser } = useAdmin();
   const [moreOpen, setMoreOpen] = useState(false);
   const newRequests = store.requests.filter((r) => r.status === 'new').length;
 
@@ -498,14 +498,14 @@ function MobileNav() {
     { id: 'calendar',  label: 'Agenda',      Icon: IconCalendar },
     { id: 'requests',  label: 'Solicitudes', Icon: IconInbox },
   ];
-  const moreItems: NavItem[] = [
+  const moreItems = ([
     { id: 'clients',   label: 'Clientes',            Icon: IconUsers },
     { id: 'blog',      label: 'Blog',                Icon: IconPen },
     { id: 'analytics', label: 'Analítica',           Icon: IconChart },
     { id: 'services',  label: 'Servicios & tarifas', Icon: IconSettings },
     { id: 'users',     label: 'Usuarios',            Icon: IconUsers },
     { id: 'data',      label: 'Datos & respaldo',    Icon: IconDatabase },
-  ];
+  ] satisfies NavItem[]).filter((item) => item.id !== 'users' || currentUser?.role === 'admin');
   const moreActive = moreItems.some((m) => m.id === page);
   const go = (id: PageId) => {
     setPage(id);
@@ -655,7 +655,7 @@ function MobileSearch() {
 }
 
 function AdminShell() {
-  const { page, loading, toast } = useAdmin();
+  const { page, loading, toast, currentUser } = useAdmin();
   return (
     <div className="relative min-h-screen w-full" style={{ background: 'var(--color-ink)', color: 'var(--color-paper)' }}>
       <div aria-hidden className="absolute inset-0 bg-hairline-grid opacity-30 pointer-events-none" />
@@ -684,7 +684,14 @@ function AdminShell() {
                 {page === 'blog' && <BlogPage />}
                 {page === 'analytics' && <AnalyticsPage />}
                 {page === 'services' && <ServicesPage />}
-                {page === 'users' && <UsersPage />}
+                {page === 'users' && (currentUser?.role === 'admin' ? (
+                  <UsersPage />
+                ) : (
+                  <div className="max-w-md mx-auto text-center py-20">
+                    <p className="font-mono text-[11px] uppercase tracking-[0.2em]" style={{ color: 'var(--color-mist)' }}>Acceso restringido</p>
+                    <p className="mt-3" style={{ color: 'var(--color-cloud)' }}>Solo los administradores pueden gestionar usuarios.</p>
+                  </div>
+                ))}
                 {page === 'data' && <DataPage />}
               </>
             )}

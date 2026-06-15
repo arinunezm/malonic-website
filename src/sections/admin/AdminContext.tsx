@@ -722,6 +722,7 @@ export function AdminProvider({ children, onLocked }: { children: React.ReactNod
 
   const addUser = useCallback<AdminState['addUser']>(
     async (name, username, password, role) => {
+      if (currentUser?.role !== 'admin') return { ok: false, error: 'Solo un administrador puede gestionar usuarios.' };
       const uname = username.trim().toLowerCase();
       if (store.users.some((u) => u.username === uname)) {
         return { ok: false, error: 'Ese usuario ya existe.' };
@@ -736,11 +737,12 @@ export function AdminProvider({ children, onLocked }: { children: React.ReactNod
       setToast(`Usuario ${user.username} creado`);
       return { ok: true };
     },
-    [mutate, store.users],
+    [mutate, store.users, currentUser],
   );
 
   const resetPassword = useCallback<AdminState['resetPassword']>(
     async (userId, password) => {
+      if (currentUser?.role !== 'admin') { setToast('Solo un administrador puede cambiar contraseñas'); return; }
       const salt = makeSalt();
       const passHash = await hashPassword(password, salt);
       mutate((s) => ({
@@ -749,11 +751,12 @@ export function AdminProvider({ children, onLocked }: { children: React.ReactNod
       }));
       setToast('Contraseña actualizada');
     },
-    [mutate],
+    [mutate, currentUser],
   );
 
   const deleteUser = useCallback<AdminState['deleteUser']>(
     (userId) => {
+      if (currentUser?.role !== 'admin') return { ok: false, error: 'Solo un administrador puede gestionar usuarios.' };
       if (userId === currentUser?.id) return { ok: false, error: 'No puedes eliminar tu propia cuenta.' };
       const target = store.users.find((u) => u.id === userId);
       if (!target) return { ok: false, error: 'Usuario no encontrado.' };
