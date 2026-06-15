@@ -6,7 +6,13 @@ import React, { useEffect, useRef, useState } from 'react';
 import { motion } from 'motion/react';
 import { ease, dur } from '../../lib/motion';
 import { useAdmin } from './AdminContext';
-import { cloudFetchProfiles, type CloudProfile } from '../../lib/cloud';
+import {
+  cloudFetchProfiles,
+  cloudCreateUser,
+  cloudDeleteUserAccount,
+  cloudResetUserPassword,
+  type CloudProfile,
+} from '../../lib/cloud';
 import {
   Avatar,
   CARD_STYLE,
@@ -43,10 +49,18 @@ import {
  * ───────────────────────────────────────────────────────────────────────── */
 
 function CloudUsersPage() {
-  const { currentUser } = useAdmin();
+  const { currentUser, notify } = useAdmin();
   const [profiles, setProfiles] = useState<CloudProfile[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [resetting, setResetting] = useState<CloudProfile | null>(null);
+  const [confirmId, setConfirmId] = useState<string | null>(null);
 
+  const refresh = () => {
+    cloudFetchProfiles()
+      .then((p) => setProfiles(p))
+      .catch((e: Error) => setError(e.message));
+  };
   useEffect(() => {
     let alive = true;
     cloudFetchProfiles()
@@ -57,14 +71,13 @@ function CloudUsersPage() {
 
   return (
     <motion.section initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: dur.md, ease: ease.outExpo }} className="max-w-[760px]">
-      <div className="rounded-[14px] p-6 mb-6" style={{ ...CARD_STYLE, border: '1px solid color-mix(in srgb, var(--color-signal) 14%, transparent)' }}>
-        <div className="flex items-center gap-2.5 mb-2">
-          <IconKey width={15} height={15} style={{ color: 'var(--color-signal)' }} />
-          <h3 className="font-display text-[1.05rem]" style={{ color: 'var(--color-paper)' }}>Accesos en la nube (Supabase Auth)</h3>
-        </div>
-        <p className="text-[0.85rem] max-w-[62ch]" style={{ color: 'var(--color-cloud)' }}>
-          Altas, bajas y contraseñas se administran en el dashboard de Supabase (Authentication → Users) y la tabla <code>profiles</code> (approved = acceso). Ver docs/FASE1_SUPABASE.md.
-        </p>
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
+        <span className="font-mono text-[11px] uppercase tracking-[0.2em]" style={{ color: 'var(--color-mist)' }}>
+          {profiles ? `${profiles.length} ${profiles.length === 1 ? 'cuenta' : 'cuentas'}` : 'Cargando…'} · acceso al CRM
+        </span>
+        <SignalButton small onClick={() => setAdding(true)}>
+          <IconUserPlus width={12} height={12} /> Agregar usuario
+        </SignalButton>
       </div>
 
       {error ? (
@@ -74,7 +87,7 @@ function CloudUsersPage() {
       ) : (
         <div className="flex flex-col gap-3">
           {profiles.map((p) => (
-            <div key={p.id} className="rounded-[14px] px-5 py-4 flex items-center gap-4" style={CARD_STYLE}>
+            <div key={p.id} className="rounded-[14px] px-5 py-4 flex flex-wrap items-center gap-4" style={CARD_STYLE}>
               <Avatar name={p.name} accent={p.role === 'admin' ? 'signal' : 'pearl'} size={40} />
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2.5">
@@ -89,11 +102,157 @@ function CloudUsersPage() {
                   {p.role === 'admin' ? 'Administrador' : 'Staff'} · alta {relativeTime(p.createdAt).toLowerCase()}
                 </div>
               </div>
+              <div className="flex items-center gap-2">
+                <GhostButton small onClick={() => setResetting(p)}>
+                  <IconKey width={11} height={11} /> Contraseña
+                </GhostButton>
+                {p.id !== currentUser?.id && (
+                  <button
+                    type="button"
+                    onClick={() => setConfirmId(p.id)}
+                    title="Eliminar"
+                    aria-label={`Eliminar ${p.name}`}
+                    data-cursor="hover"
+                    className="w-8 h-8 rounded-full flex items-center justify-center hover:bg-white/[0.06] transition-colors"
+                    style={{ color: 'var(--color-cloud)' }}
+                  >
+                    <IconTrash width={14} height={14} />
+                  </button>
+                )}
+              </div>
             </div>
           ))}
         </div>
       )}
+
+      <p className="mt-6 max-w-[68ch] text-[0.78rem]" style={{ color: 'var(--color-mist)' }}>
+        Los usuarios entran al CRM con su correo y contraseña. Las altas, bajas y cambios de
+        contraseña se procesan de forma segura en el servidor — la contraseña que pongas aquí se la
+        compartes a la persona para su primer acceso.
+      </p>
+
+      <CloudAddUserModal
+        open={adding}
+        onClose={() => setAdding(false)}
+        onDone={() => { setAdding(false); refresh(); }}
+        notify={notify}
+      />
+      <CloudResetPasswordModal
+        target={resetting}
+        onClose={() => setResetting(null)}
+        onDone={() => setResetting(null)}
+        notify={notify}
+      />
+      <ConfirmDialog
+        open={confirmId !== null}
+        onClose={() => setConfirmId(null)}
+        onConfirm={async () => {
+          if (!confirmId) return;
+          try {
+            await cloudDeleteUserAccount(confirmId);
+            notify('Usuario eliminado');
+            refresh();
+          } catch (e) {
+            notify(e instanceof Error ? e.message : 'No se pudo eliminar');
+          }
+        }}
+        title="Eliminar usuario"
+        body="La persona perderá acceso al CRM. Esta acción no se puede deshacer."
+      />
     </motion.section>
+  );
+}
+
+function CloudAddUserModal({ open, onClose, onDone, notify }: { open: boolean; onClose: () => void; onDone: () => void; notify: (m: string) => void }) {
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [role, setRole] = useState<Role>('staff');
+  const [busy, setBusy] = useState(false);
+  const valid = name.trim().length > 1 && email.includes('@') && password.length >= 6;
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!valid || busy) return;
+    setBusy(true);
+    try {
+      await cloudCreateUser(name, email, password, role);
+      notify(`Usuario ${email.trim().toLowerCase()} creado`);
+      setName(''); setEmail(''); setPassword(''); setRole('staff');
+      onDone();
+    } catch (err) {
+      notify(err instanceof Error ? err.message : 'No se pudo crear el usuario');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <ModalShell open={open} onClose={onClose} label="Accesos" title={<>Nuevo <span className="italic-emphasis">usuario.</span></>}>
+      <form onSubmit={submit} className="px-6 sm:px-8 py-6 flex flex-col gap-5">
+        <div className="grid gap-x-6 gap-y-4 sm:grid-cols-2">
+          <Field label="Nombre *" htmlFor="cu-name" active={name.length > 0}>
+            <input id="cu-name" type="text" value={name} onChange={(e) => setName(e.target.value)} autoComplete="off" autoFocus style={fieldInputStyle} />
+          </Field>
+          <Field label="Correo *" htmlFor="cu-email" active={email.length > 0} hint="Con este correo inicia sesión">
+            <input id="cu-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="off" style={fieldInputStyle} />
+          </Field>
+          <Field label="Contraseña *" htmlFor="cu-pass" active={password.length > 0} hint="Mínimo 6 — compártela con la persona">
+            <input id="cu-pass" type="text" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="off" style={fieldInputStyle} />
+          </Field>
+          <Field label="Rol" htmlFor="cu-role" active>
+            <select id="cu-role" value={role} onChange={(e) => setRole(e.target.value as Role)} style={fieldInputStyle}>
+              <option value="staff">Staff</option>
+              <option value="admin">Administrador</option>
+            </select>
+          </Field>
+        </div>
+        <div className="flex items-center justify-end gap-3 pt-1">
+          <GhostButton onClick={onClose}>Cancelar</GhostButton>
+          <SignalButton type="submit" disabled={!valid || busy}>
+            <IconCheck width={13} height={13} strokeWidth={2} /> {busy ? 'Creando…' : 'Crear cuenta'}
+          </SignalButton>
+        </div>
+      </form>
+    </ModalShell>
+  );
+}
+
+function CloudResetPasswordModal({ target, onClose, onDone, notify }: { target: CloudProfile | null; onClose: () => void; onDone: () => void; notify: (m: string) => void }) {
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const valid = password.length >= 6;
+  return (
+    <ModalShell open={target !== null} onClose={onClose} label={target ? target.name : ''} title={<>Nueva <span className="italic-emphasis">contraseña.</span></>}>
+      <form
+        onSubmit={async (e) => {
+          e.preventDefault();
+          if (!valid || busy || !target) return;
+          setBusy(true);
+          try {
+            await cloudResetUserPassword(target.id, password);
+            notify('Contraseña actualizada');
+            setPassword('');
+            onDone();
+          } catch (err) {
+            notify(err instanceof Error ? err.message : 'No se pudo actualizar');
+          } finally {
+            setBusy(false);
+          }
+        }}
+        className="px-6 sm:px-8 py-6 flex flex-col gap-5"
+      >
+        <Field label="Contraseña nueva *" htmlFor="crp-pass" active={password.length > 0} hint="Mínimo 6 — compártela con la persona">
+          <input id="crp-pass" type="text" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="off" autoFocus style={fieldInputStyle} />
+        </Field>
+        <div className="flex items-center justify-end gap-3 pt-1">
+          <GhostButton onClick={onClose}>Cancelar</GhostButton>
+          <SignalButton type="submit" disabled={!valid || busy}>
+            <IconKey width={12} height={12} /> {busy ? 'Guardando…' : 'Actualizar'}
+          </SignalButton>
+        </div>
+      </form>
+    </ModalShell>
   );
 }
 

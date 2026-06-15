@@ -80,6 +80,35 @@ export async function cloudFetchProfiles(): Promise<CloudProfile[]> {
   }));
 }
 
+/* Gestión de usuarios desde el dashboard (vía Edge Function `admin-users`,
+ * que valida que el caller es admin y usa el service_role del lado servidor). */
+
+async function callAdminUsers(body: Record<string, unknown>): Promise<void> {
+  const { data, error } = await sb().functions.invoke('admin-users', { body });
+  if (error) {
+    // La Edge Function devuelve { error } con status !=2xx → viene en context.
+    let msg = error.message;
+    try {
+      const ctx = (error as { context?: Response }).context;
+      if (ctx && typeof ctx.json === 'function') {
+        const j = await ctx.json();
+        if (j?.error) msg = j.error;
+      }
+    } catch { /* usa error.message */ }
+    throw new Error(msg);
+  }
+  if (data && (data as { error?: string }).error) throw new Error((data as { error: string }).error);
+}
+
+export const cloudCreateUser = (name: string, email: string, password: string, role: Role) =>
+  callAdminUsers({ action: 'create', name, email, password, role });
+
+export const cloudDeleteUserAccount = (userId: string) =>
+  callAdminUsers({ action: 'delete', userId });
+
+export const cloudResetUserPassword = (userId: string, password: string) =>
+  callAdminUsers({ action: 'reset-password', userId, password });
+
 async function cloudFetchProfile(userId: string): Promise<{ name: string; role: Role } | null> {
   const { data, error } = await sb()
     .from('profiles')
