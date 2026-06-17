@@ -52,17 +52,20 @@ export function Hero() {
         className="absolute inset-0"
         style={{ y: imgY, scale: imgScale, opacity: fade }}
       >
-        <motion.img
-          src={HERO_IMG}
-          alt=""
-          aria-hidden
-          fetchPriority="high"
-          decoding="async"
-          className="w-full h-full object-cover"
-          style={{ filter: 'grayscale(20%) contrast(1.08) brightness(0.6)' }}
-          animate={{ scale: [1, 1.025, 1] }}
-          transition={{ duration: 18, ease: 'easeInOut', repeat: Infinity }}
-        />
+        <picture style={{ display: 'block', width: '100%', height: '100%' }}>
+          <source type="image/webp" srcSet="/img/hero-controlroom.webp" />
+          <motion.img
+            src={HERO_IMG}
+            alt=""
+            aria-hidden
+            fetchPriority="high"
+            decoding="async"
+            className="w-full h-full object-cover"
+            style={{ filter: 'grayscale(20%) contrast(1.08) brightness(0.6)' }}
+            animate={{ scale: [1, 1.025, 1] }}
+            transition={{ duration: 18, ease: 'easeInOut', repeat: Infinity }}
+          />
+        </picture>
         <div
           className="absolute inset-0"
           style={{

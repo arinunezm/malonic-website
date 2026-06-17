@@ -4,6 +4,19 @@ import { useLang, content } from '../lib/i18n';
 import { ease, dur } from '../lib/motion';
 import { useSectionTheme, Label } from '../components/primitives';
 
+const MAPS_URL =
+  'https://www.google.com/maps/search/?api=1&query=' +
+  encodeURIComponent('Ave. Gómez Morín 922, San Pedro Garza García, Nuevo León');
+
+/** Convierte texto de contacto/redes en enlace accionable; si no aplica, queda como texto. */
+function hrefFor(value: string): string | undefined {
+  if (value.includes('@')) return `mailto:${value}`;
+  if (/^\+\d[\d\s]+$/.test(value)) return `tel:${value.replace(/\s+/g, '')}`;
+  if (value === 'Instagram') return 'https://www.instagram.com/malonicrecords';
+  if (value.startsWith('Ave.')) return MAPS_URL;
+  return undefined;
+}
+
 export function Footer() {
   const ref = useSectionTheme<HTMLElement>('dark');
   const { lang } = useLang();
@@ -37,11 +50,27 @@ export function Footer() {
                   {section.title[lang]}
                 </p>
                 <ul className="space-y-2 text-sm opacity-80">
-                  {section.items.map((it, j) => (
-                    <li key={j} className="hover:opacity-60 transition-opacity">
-                      {it[lang]}
-                    </li>
-                  ))}
+                  {section.items.map((it, j) => {
+                    const href = hrefFor(it[lang]);
+                    const external = href?.startsWith('http');
+                    return (
+                      <li key={j} className="hover:opacity-60 transition-opacity">
+                        {href ? (
+                          <a
+                            href={href}
+                            target={external ? '_blank' : undefined}
+                            rel={external ? 'noreferrer' : undefined}
+                            data-cursor="hover"
+                            className="hover:underline underline-offset-4"
+                          >
+                            {it[lang]}
+                          </a>
+                        ) : (
+                          it[lang]
+                        )}
+                      </li>
+                    );
+                  })}
                 </ul>
               </motion.div>
             ))}

@@ -257,26 +257,29 @@ export function RevealImage({
       className={`cine-frame ${className}`}
       style={{ aspectRatio: ratio, position: 'relative' }}
     >
-      <motion.img
-        src={src}
-        alt={alt}
-        loading="lazy"
-        referrerPolicy="no-referrer"
-        className="cine-img"
-        style={{
-          position: 'absolute',
-          inset: 0,
-          width: '100%',
-          height: '100%',
-          objectFit: 'cover',
-        }}
-        initial={{ scale: 1.18, y: parallax * 30 }}
-        animate={inView ? { scale: 1, y: 0 } : { scale: 1.18 }}
-        transition={{
-          duration: reduce ? 0.001 : 1.6,
-          ease: ease.outExpo,
-        }}
-      />
+      <picture>
+        <source type="image/webp" srcSet={src.replace(/\.(jpe?g|png)$/i, '.webp')} />
+        <motion.img
+          src={src}
+          alt={alt}
+          loading="lazy"
+          referrerPolicy="no-referrer"
+          className="cine-img"
+          style={{
+            position: 'absolute',
+            inset: 0,
+            width: '100%',
+            height: '100%',
+            objectFit: 'cover',
+          }}
+          initial={{ scale: 1.18, y: parallax * 30 }}
+          animate={inView ? { scale: 1, y: 0 } : { scale: 1.18 }}
+          transition={{
+            duration: reduce ? 0.001 : 1.6,
+            ease: ease.outExpo,
+          }}
+        />
+      </picture>
       <motion.div
         aria-hidden
         className="reveal-mask"

@@ -35,7 +35,7 @@
 
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link rel="preload" as="image" href="/img/hero-controlroom.jpg" fetchpriority="high" />
+    <link rel="preload" as="image" href="/img/hero-controlroom.webp" type="image/webp" fetchpriority="high" />
     <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,600&family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" />
 
     <!-- JSON-LD · LocalBusiness -->
@@ -74,7 +74,19 @@
       ],
       "sameAs": [
         "https://www.instagram.com/malonicrecords"
-      ]
+      ],
+      "priceRange": "$$",
+      "areaServed": "Monterrey · Nuevo León · MX",
+      "hasOfferCatalog": {
+        "@type": "OfferCatalog",
+        "name": "Servicios de estudio",
+        "itemListElement": [
+          { "@type": "Offer", "priceCurrency": "MXN", "price": "7000", "itemOffered": { "@type": "Service", "name": "Grabación" } },
+          { "@type": "Offer", "priceCurrency": "MXN", "price": "15000", "itemOffered": { "@type": "Service", "name": "Mezcla Dolby Atmos 7.1.4" } },
+          { "@type": "Offer", "priceCurrency": "MXN", "price": "3500", "itemOffered": { "@type": "Service", "name": "Masterización" } },
+          { "@type": "Offer", "priceCurrency": "MXN", "price": "8000", "itemOffered": { "@type": "Service", "name": "Renta del estudio" } }
+        ]
+      }
     }
     </script>
   </head>
