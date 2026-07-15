@@ -317,26 +317,87 @@ export const operationalOf = (s: StoreData): OperationalDoc => ({
   settings: s.settings,
 });
 
+const normalizeDoc = (raw: unknown): OperationalDoc => {
+  const d = (raw ?? {}) as Partial<OperationalDoc>;
+  return {
+    clients: Array.isArray(d.clients) ? d.clients : [],
+    services: Array.isArray(d.services) ? d.services : [],
+    bookings: Array.isArray(d.bookings) ? d.bookings : [],
+    activities: Array.isArray(d.activities) ? d.activities : [],
+    settings: d.settings && typeof d.settings === 'object' ? d.settings : {},
+  };
+};
+
 export async function cloudPullDocument(): Promise<{ doc: OperationalDoc; updatedAt: string } | null> {
   const { data, error } = await sb().from('documents').select('data, updated_at').eq('key', DOC_KEY).maybeSingle();
   if (error) throw new Error(error.message);
   if (!data) return null;
-  const d = data.data as Partial<OperationalDoc>;
-  return {
-    doc: {
-      clients: Array.isArray(d.clients) ? d.clients : [],
-      services: Array.isArray(d.services) ? d.services : [],
-      bookings: Array.isArray(d.bookings) ? d.bookings : [],
-      activities: Array.isArray(d.activities) ? d.activities : [],
-      settings: d.settings && typeof d.settings === 'object' ? d.settings : {},
-    },
-    updatedAt: data.updated_at as string,
-  };
+  return { doc: normalizeDoc(data.data), updatedAt: data.updated_at as string };
 }
 
-export async function cloudPushDocument(doc: OperationalDoc): Promise<void> {
-  const { error } = await sb()
+/**
+ * Resultado del push. `conflict` = otro dispositivo escribió después de
+ * nuestra última hidratación; el caller decide (avisar / recargar), nunca
+ * se pisa en silencio.
+ */
+export type PushResult =
+  | { status: 'saved'; updatedAt: string }
+  | { status: 'conflict'; remoteUpdatedAt: string | null; remoteDoc: OperationalDoc | null };
+
+/**
+ * Compare-and-swap contra `documents.updated_at`.
+ *
+ * `base` = el updated_at que este dispositivo cree que está en la nube
+ * (null = todavía no existe la fila). El UPDATE solo pega si nadie escribió
+ * en medio; si afecta 0 filas hay conflicto. El nuevo updated_at lo pone el
+ * trigger del servidor (migración 0002), no el reloj del navegador.
+ */
+export async function cloudPushDocument(doc: OperationalDoc, base: string | null): Promise<PushResult> {
+  if (base === null) {
+    const { data, error } = await sb().from('documents').insert({ key: DOC_KEY, data: doc }).select('updated_at').maybeSingle();
+    // 23505 = unique_violation: otro dispositivo creó la fila primero.
+    if (error?.code === '23505') {
+      const remote = await cloudPullDocument().catch(() => null);
+      return { status: 'conflict', remoteUpdatedAt: remote?.updatedAt ?? null, remoteDoc: remote?.doc ?? null };
+    }
+    if (error) throw new Error(error.message);
+    return { status: 'saved', updatedAt: data!.updated_at as string };
+  }
+
+  const { data, error } = await sb()
     .from('documents')
-    .upsert({ key: DOC_KEY, data: doc, updated_at: new Date().toISOString() });
+    .update({ data: doc })
+    .eq('key', DOC_KEY)
+    .eq('updated_at', base)
+    .select('updated_at')
+    .maybeSingle();
   if (error) throw new Error(error.message);
+  if (!data) {
+    const remote = await cloudPullDocument().catch(() => null);
+    return { status: 'conflict', remoteUpdatedAt: remote?.updatedAt ?? null, remoteDoc: remote?.doc ?? null };
+  }
+  return { status: 'saved', updatedAt: data.updated_at as string };
+}
+
+/** Igualdad por contenido del documento (no por referencia). */
+export const sameDoc = (a: OperationalDoc, b: OperationalDoc): boolean =>
+  JSON.stringify(a) === JSON.stringify(b);
+
+/** Suscripción realtime al documento operativo. Devuelve unsubscribe. */
+export function cloudOnDocumentChange(fn: (doc: OperationalDoc, updatedAt: string) => void): () => void {
+  const channel = sb()
+    .channel('crm-document')
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'documents', filter: `key=eq.${DOC_KEY}` },
+      (payload) => {
+        const row = payload.new as { data?: unknown; updated_at?: string } | null;
+        if (!row?.data || !row.updated_at) return;
+        fn(normalizeDoc(row.data), row.updated_at);
+      },
+    )
+    .subscribe();
+  return () => {
+    void sb().removeChannel(channel);
+  };
 }

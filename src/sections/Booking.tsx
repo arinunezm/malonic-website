@@ -3,6 +3,7 @@ import { motion } from 'motion/react';
 import { useLang, content } from '../lib/i18n';
 import { ease, dur } from '../lib/motion';
 import { useSectionTheme, Label, MagneticButton } from '../components/primitives';
+import { track } from '@vercel/analytics';
 import { submitWebRequest } from '../lib/admin-store';
 import { cloudConfigured } from '../lib/cloud-env';
 
@@ -40,16 +41,24 @@ export function Booking() {
       service: form.service,
       message: form.message,
     };
+    let destino: 'nube' | 'local' = 'local';
     if (cloudConfigured) {
       try {
         const { cloudSubmitRequest } = await import('../lib/cloud');
         await cloudSubmitRequest(payload);
+        destino = 'nube';
       } catch {
         submitWebRequest(payload);
       }
     } else {
       submitWebRequest(payload);
     }
+    // Cierra el embudo visita → solicitud. `destino` delata el fallback local
+    // (proyecto pausado / sin red): esa solicitud NO llegó al CRM.
+    // Sin datos personales — solo el servicio de interés.
+    // OJO: los custom events son de plan Pro; en Hobby esto no registra nada
+    // (no falla, simplemente se ignora). Los pageviews sí funcionan.
+    track('solicitud_enviada', { destino, servicio: form.service || 'sin_especificar' });
     setSending(false);
     setSubmitted(true);
   };

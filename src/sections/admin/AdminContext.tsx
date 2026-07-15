@@ -36,6 +36,7 @@ import {
   cloudDeletePost,
   cloudFetchAllPosts,
   cloudFetchRequests,
+  cloudOnDocumentChange,
   cloudOnNewRequest,
   cloudPullDocument,
   cloudPushDocument,
@@ -45,7 +46,9 @@ import {
   cloudUpdateRequestStatus,
   cloudUpsertPost,
   operationalOf,
+  sameDoc,
   type CloudUser,
+  type OperationalDoc,
 } from '../../lib/cloud';
 
 export type PageId =
@@ -194,6 +197,84 @@ export function AdminProvider({ children, onLocked }: { children: React.ReactNod
   cloudUserRef.current = cloudUser;
   const pushTimer = useRef<number | undefined>(undefined);
 
+  /* Doc-sync — estado de la subida a la nube.
+   * docUpdatedAt: versión que este dispositivo cree que está en la nube; es la
+   *   base del compare-and-swap. null = la fila aún no existe.
+   * pending: último snapshot sin confirmar. dirty = hay algo sin subir; lo lee
+   *   el guard de beforeunload, por eso es ref y no state (no necesita render).
+   */
+  const docUpdatedAtRef = useRef<string | null>(null);
+  const pendingRef = useRef<OperationalDoc | null>(null);
+  const dirtyRef = useRef(false);
+  const pushingRef = useRef(false);
+  const retriesRef = useRef(0);
+  const retryTimer = useRef<number | undefined>(undefined);
+
+  const MAX_RETRIES = 5;
+
+  /**
+   * Sube el snapshot pendiente. Reintenta con backoff ante fallo de red y
+   * detecta conflicto (otro dispositivo escribió primero) en vez de pisar.
+   * `force` re-basa contra la nube: lo usa restaurar respaldo, que sí debe ganar.
+   */
+  const flushDoc = useCallback(async (force = false): Promise<void> => {
+    if (!cloudConfigured || !cloudUserRef.current) return;
+    const snapshot = pendingRef.current;
+    if (!snapshot || pushingRef.current) return;
+    pushingRef.current = true;
+    window.clearTimeout(retryTimer.current);
+    let again = false;
+    try {
+      if (force) {
+        const remote = await cloudPullDocument().catch(() => null);
+        docUpdatedAtRef.current = remote?.updatedAt ?? null;
+      }
+      const res = await cloudPushDocument(snapshot, docUpdatedAtRef.current);
+      if (res.status === 'saved') {
+        docUpdatedAtRef.current = res.updatedAt;
+        retriesRef.current = 0;
+        // Solo limpiamos si no entraron cambios nuevos mientras subíamos;
+        // si entraron, hay que subirlos o se quedarían esperando otra mutación.
+        if (pendingRef.current === snapshot) {
+          pendingRef.current = null;
+          dirtyRef.current = false;
+        } else {
+          again = true;
+        }
+      } else if (res.remoteDoc && sameDoc(res.remoteDoc, snapshot)) {
+        // No es conflicto real: nuestro push sí llegó pero se perdió la
+        // respuesta (red inestable) y el reintento chocó con su propio cambio.
+        // Lo que hay en la nube ES lo nuestro → adoptamos la versión y listo.
+        docUpdatedAtRef.current = res.remoteUpdatedAt;
+        retriesRef.current = 0;
+        if (pendingRef.current === snapshot) {
+          pendingRef.current = null;
+          dirtyRef.current = false;
+        } else {
+          again = true;
+        }
+      } else {
+        // Conflicto real: otro dispositivo escribió algo distinto. NO re-basamos
+        // a propósito — si adoptáramos su updated_at, la siguiente edición
+        // pisaría sus cambios en silencio, que es justo lo que queremos evitar.
+        // El cambio local sigue en localStorage; la salida es exportar y recargar.
+        setToast('⚠ Otro dispositivo guardó cambios — exporta un respaldo desde Datos y recarga');
+      }
+    } catch {
+      retriesRef.current += 1;
+      if (retriesRef.current <= MAX_RETRIES) {
+        const delay = Math.min(30_000, 1000 * 2 ** (retriesRef.current - 1));
+        retryTimer.current = window.setTimeout(() => void flushDoc(), delay);
+        setToast('⚠ Sin conexión — reintentando guardar en la nube…');
+      } else {
+        setToast('⚠ No se pudo guardar en la nube — exporta un respaldo desde Datos');
+      }
+    } finally {
+      pushingRef.current = false;
+    }
+    if (again) void flushDoc();
+  }, []);
+
   useEffect(() => {
     const t = window.setTimeout(() => setLoading(false), 550);
     return () => window.clearTimeout(t);
@@ -218,7 +299,8 @@ export function AdminProvider({ children, onLocked }: { children: React.ReactNod
       cloudFetchRequests(),
       cloudFetchAllPosts(),
     ]);
-    let firstPush = false;
+    // Base del compare-and-swap: la versión que acabamos de leer.
+    docUpdatedAtRef.current = docRes?.updatedAt ?? null;
     setStore((prev) => {
       const next: StoreData = {
         ...prev,
@@ -227,14 +309,16 @@ export function AdminProvider({ children, onLocked }: { children: React.ReactNod
         posts,
       };
       persistStore(next); // cache local de respaldo
-      firstPush = !docRes && (prev.bookings.length > 0 || prev.clients.length > 0 || prev.services.length > 0);
+      const firstPush = !docRes && (prev.bookings.length > 0 || prev.clients.length > 0 || prev.services.length > 0);
       if (firstPush) {
         // Primer dispositivo con data local previa: migrarla a la nube.
-        void cloudPushDocument(operationalOf(next)).catch(() => {});
+        pendingRef.current = operationalOf(next);
+        dirtyRef.current = true;
+        window.setTimeout(() => void flushDoc(), 0);
       }
       return next;
     });
-  }, []);
+  }, [flushDoc]);
 
   // Boot cloud: restaurar sesión Supabase y, si existe, hidratar.
   useEffect(() => {
@@ -308,20 +392,69 @@ export function AdminProvider({ children, onLocked }: { children: React.ReactNod
           );
         }
         // Doc-sync (debounce): clients/services/bookings/activities a Supabase.
+        // El snapshot queda pendiente hasta que la nube lo confirme; si la
+        // pestaña se cierra antes, los listeners de abajo lo suben o avisan.
         if (cloudConfigured && cloudUserRef.current) {
-          const snapshot = operationalOf(next);
+          pendingRef.current = operationalOf(next);
+          dirtyRef.current = true;
+          retriesRef.current = 0;
           window.clearTimeout(pushTimer.current);
-          pushTimer.current = window.setTimeout(() => {
-            cloudPushDocument(snapshot).catch(() =>
-              setToast('⚠ Sin conexión — cambios guardados localmente'),
-            );
-          }, 800);
+          pushTimer.current = window.setTimeout(() => void flushDoc(), 800);
         }
         return next;
       });
     },
-    [],
+    [flushDoc],
   );
+
+  /* Cierre de pestaña / cambio de app: subir lo pendiente sin esperar el
+   * debounce, y si aún así queda sin subir, el navegador avisa antes de salir.
+   * `visibilitychange` es el evento fiable en móvil (beforeunload no dispara). */
+  useEffect(() => {
+    if (!cloud) return;
+    const flushNow = () => {
+      if (!dirtyRef.current) return;
+      window.clearTimeout(pushTimer.current);
+      void flushDoc();
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') flushNow();
+    };
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      flushNow();
+      if (!dirtyRef.current) return;
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pagehide', flushNow);
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pagehide', flushNow);
+      window.removeEventListener('beforeunload', onBeforeUnload);
+    };
+  }, [cloud, flushDoc]);
+
+  /* Realtime del documento operativo: reservas/clientes/servicios editados en
+   * otro dispositivo entran en vivo. Si hay cambios locales sin subir NO se
+   * pisan — se avisa y el conflicto lo resuelve el push. */
+  useEffect(() => {
+    if (!cloud || !cloudUser) return;
+    return cloudOnDocumentChange((doc, updatedAt) => {
+      if (pushingRef.current || updatedAt === docUpdatedAtRef.current) return; // eco de nuestro propio push
+      if (dirtyRef.current) {
+        setToast('⚠ Otro dispositivo guardó cambios — tus cambios locales aún no suben');
+        return;
+      }
+      docUpdatedAtRef.current = updatedAt;
+      setStore((prev) => {
+        const next: StoreData = { ...prev, ...doc };
+        persistStore(next);
+        return next;
+      });
+    });
+  }, [cloud, cloudUser]);
 
   /* ── auth ─────────────────────────────────────────────────────────── */
 
@@ -773,10 +906,33 @@ export function AdminProvider({ children, onLocked }: { children: React.ReactNod
 
   /* ── backup ───────────────────────────────────────────────────────── */
 
-  const replaceStore = useCallback((data: StoreData) => {
-    setStore(data);
-    setToast('Respaldo restaurado');
-  }, []);
+  /**
+   * Restaurar respaldo. En modo nube la restauración TIENE que ganarle al
+   * documento remoto: sin esto solo entraba a la pantalla y la siguiente
+   * hidratación la pisaba con los datos viejos, en silencio.
+   * La zona de riesgo (borrar todo) es solo modo local — ver AdminSystem.
+   */
+  const replaceStore = useCallback(
+    (data: StoreData) => {
+      setStore(data);
+      persistStore(data);
+      if (!cloudConfigured || !cloudUserRef.current) {
+        setToast('Respaldo restaurado');
+        return;
+      }
+      pendingRef.current = operationalOf(data);
+      dirtyRef.current = true;
+      retriesRef.current = 0;
+      window.clearTimeout(pushTimer.current);
+      void flushDoc(true); // force: re-basa contra la nube y sobrescribe
+      // El blog vive en su propia tabla, fuera del documento operativo.
+      void (async () => {
+        for (const p of data.posts) await cloudUpsertPost(p).catch(() => {});
+      })();
+      setToast('Respaldo restaurado — subiendo a la nube');
+    },
+    [flushDoc],
+  );
 
   const value: AdminState = {
     store,

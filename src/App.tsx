@@ -21,6 +21,7 @@
 
 import React, { Suspense, lazy, useEffect, useState } from 'react';
 import { AnimatePresence } from 'motion/react';
+import { Analytics } from '@vercel/analytics/react';
 
 import { LangProvider } from './lib/i18n';
 import { Cursor, Grain, LoadingScreen, ScrollProgress } from './components/primitives';
@@ -85,6 +86,7 @@ export default function App() {
   if (route.kind === 'blog' || route.kind === 'post') {
     return (
       <LangProvider>
+        <Analytics />
         <Cursor />
         <Grain />
         <Suspense fallback={<ShellFallback />}>
@@ -94,7 +96,14 @@ export default function App() {
     );
   }
 
-  return <MarketingSite />;
+  // Analítica solo en las páginas públicas — /admin es el CRM del equipo y
+  // medirlo solo ensucia el embudo visita → solicitud → reserva.
+  return (
+    <>
+      <Analytics />
+      <MarketingSite />
+    </>
+  );
 }
 
 /** Pantalla ink vacía mientras carga el chunk lazy (evita flash blanco). */
