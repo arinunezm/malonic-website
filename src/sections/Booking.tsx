@@ -125,6 +125,20 @@ export function Booking() {
                     {content.booking.contact.phone}
                   </a>
                 </div>
+                <div>
+                  <a
+                    href={`https://wa.me/${content.booking.contact.phone.replace(/\D/g, '')}?text=${encodeURIComponent(
+                      lang === 'es' ? 'Hola Malonic, me interesa agendar una sesión.' : "Hi Malonic, I'd like to book a session.",
+                    )}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="font-display text-2xl md:text-3xl block hover:opacity-70 transition-opacity"
+                    style={{ letterSpacing: '-0.018em' }}
+                    data-cursor="hover"
+                  >
+                    WhatsApp →
+                  </a>
+                </div>
               </div>
 
               <div className="pt-6 border-t border-current/30 font-mono text-[10px] uppercase tracking-[0.18em]" style={{ opacity: 0.82 }}>

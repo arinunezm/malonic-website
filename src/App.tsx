@@ -32,6 +32,7 @@ import { Studio } from './sections/Studio';
 import { Equipment } from './sections/Equipment';
 import { Services } from './sections/Services';
 import { Catalogue } from './sections/Catalogue';
+import { Faq } from './sections/Faq';
 import { Booking } from './sections/Booking';
 import { Footer } from './sections/Footer';
 
@@ -137,6 +138,7 @@ function MarketingSite() {
         <Equipment />
         <Services />
         <Catalogue />
+        <Faq />
         <Booking />
       </main>
 

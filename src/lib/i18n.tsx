@@ -255,6 +255,58 @@ export const content = {
     ],
   },
 
+  faq: {
+    label: { es: 'Preguntas frecuentes', en: 'Frequently asked' },
+    headline: {
+      es: ['Antes de', 'reservar.'],
+      en: ['Before you', 'book.'],
+    },
+    items: [
+      {
+        q: { es: '¿Qué hace único al estudio?', en: 'What makes the studio unique?' },
+        a: {
+          es: 'Es el único estudio con certificación oficial Dolby Atmos 7.1.4 en el norte de México, con diseño acústico de MDG (Horacio Malvicino).',
+          en: 'It is the only officially Dolby Atmos 7.1.4 certified studio in northern Mexico, with acoustic design by MDG (Horacio Malvicino).',
+        },
+      },
+      {
+        q: { es: '¿Cuánto cuesta una sesión?', en: 'How much does a session cost?' },
+        a: {
+          es: 'Grabación desde $7,000 MXN (paquete de 6 horas), mezcla Atmos $15,000–$40,000 por track, masterización $3,500–$8,000 y renta del estudio $8,000–$18,000 por día. Cada proyecto recibe una cotización a medida.',
+          en: 'Recording from $7,000 MXN (6-hour package), Atmos mix $15,000–$40,000 per track, mastering $3,500–$8,000, and studio rental $8,000–$18,000 per day. Every project gets a tailored quote.',
+        },
+      },
+      {
+        q: { es: '¿En cuánto responden una solicitud?', en: 'How quickly do you reply?' },
+        a: {
+          es: 'En menos de 24 horas, con disponibilidad y un plan a la medida de tu proyecto.',
+          en: 'Within 24 hours, with availability and a plan tailored to your project.',
+        },
+      },
+      {
+        q: { es: '¿Puedo rentar el estudio con mi propio ingeniero?', en: 'Can I rent the studio with my own engineer?' },
+        a: {
+          es: 'Sí. La renta da acceso completo para producciones e ingenieros invitados, con asistencia técnica disponible.',
+          en: 'Yes. Rental gives full access for external productions and visiting engineers, with technical assistance available.',
+        },
+      },
+      {
+        q: { es: '¿Para qué plataformas masterizan?', en: 'What platforms do you master for?' },
+        a: {
+          es: 'Streaming (Apple Music, Tidal, Amazon Music HD), vinilo y formatos espaciales, con una cadena híbrida analógica y digital.',
+          en: 'Streaming (Apple Music, Tidal, Amazon Music HD), vinyl and immersive formats, with a hybrid analog-and-digital chain.',
+        },
+      },
+      {
+        q: { es: '¿Dónde están y cómo agendo?', en: 'Where are you and how do I book?' },
+        a: {
+          es: 'En Ave. Gómez Morín 922, Local 6, Col. Carrizalejo, San Pedro Garza García, NL. Agenda por reserva: llena el formulario o escríbenos por WhatsApp o correo.',
+          en: 'At Ave. Gómez Morín 922, Local 6, Carrizalejo, San Pedro Garza García, NL. By appointment: fill out the form or reach us via WhatsApp or email.',
+        },
+      },
+    ],
+  },
+
   booking: {
     label: { es: '05 · Reservas', en: '05 · Booking' },
     headline: {
